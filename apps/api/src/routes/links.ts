@@ -1,10 +1,19 @@
-import { createRoute, type OpenAPIHono } from "@hono/zod-openapi";
-import { attachTag, insertLink, upsertTag } from "../db/queries";
+import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
+import {
+  attachTag,
+  findLiveLinkBySlug,
+  findTagNamesForLinks,
+  insertLink,
+  listLinks,
+  upsertTag,
+} from "../db/queries";
 import { ApiError } from "../errors";
 import { putRedirect, redirectEntryFor } from "../kv/redirects-cache";
 import { methodNotAllowed } from "../middleware/errors";
 import { createLinkSchema } from "../schemas/create-link";
+import { listLinksQuerySchema } from "../schemas/list-query";
 import { serializeLink } from "../serializers/link";
+import { decodeCursor, encodeCursor } from "../services/cursor";
 import { resolveSlug } from "../services/slugs";
 import type { AppEnv } from "../types";
 
@@ -37,7 +46,42 @@ function isSlugUniqueViolation(err: unknown): boolean {
   return err instanceof Error && /UNIQUE constraint failed: links\.slug/.test(err.message);
 }
 
-export function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>): void {
+/**
+ * The path param carries no format schema on purpose: api-contract §GET one
+ * says "unknown or tombstoned → 404", and a malformed slug is simply one that
+ * cannot exist. Answering 400 for `ab` and 404 for `abc` would split one
+ * outcome — "no such link" — across two statuses.
+ */
+const slugParamSchema = z.object({ slug: z.string() });
+
+export const getLinkRoute = createRoute({
+  method: "get",
+  path: "/v1/links/{slug}",
+  summary: "Fetch one link",
+  request: { params: slugParamSchema },
+  responses: {
+    200: { description: "The link." },
+    401: { description: "Missing or invalid API key." },
+    404: { description: "No such link, or it has been deleted." },
+  },
+});
+
+function registerGetLinkRoute(app: OpenAPIHono<AppEnv>): void {
+  app.openapi(getLinkRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    const row = await findLiveLinkBySlug(c.env.DB, slug);
+
+    if (row === null) {
+      throw new ApiError("not_found", "Resource not found.");
+    }
+
+    const tags = await findTagNamesForLinks(c.env.DB, [row.id]);
+
+    return c.json(serializeLink(row, tags.get(row.id) ?? [], c.env.ENVIRONMENT), 200);
+  });
+}
+
+function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>): void {
   app.openapi(createLinkRoute, async (c) => {
     const body = c.req.valid("json");
     const key = c.get("key");
@@ -98,7 +142,81 @@ export function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>): void {
 
     return c.json(serializeLink(row, tags, c.env.ENVIRONMENT), 201);
   });
+}
 
-  // After the handler — see methodNotAllowed's contract.
+export const listLinksRoute = createRoute({
+  method: "get",
+  path: "/v1/links",
+  summary: "List links",
+  request: { query: listLinksQuerySchema },
+  responses: {
+    200: { description: "A page of links, newest first, with the next cursor." },
+    400: { description: "Unknown filter, bad value or an unreadable cursor." },
+    401: { description: "Missing or invalid API key." },
+  },
+});
+
+function registerListLinksRoute(app: OpenAPIHono<AppEnv>): void {
+  app.openapi(listLinksRoute, async (c) => {
+    const query = c.req.valid("query");
+
+    // Decoded here rather than in the schema: the handler cannot forget to,
+    // since it needs the position to build the query at all.
+    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor);
+
+    if (after === null) {
+      throw new ApiError("invalid_request", "The cursor is not one this API issued.", "cursor");
+    }
+
+    // One row beyond the page: its presence is what distinguishes "more to
+    // come" from "exhausted", so `next_cursor` is null exactly at the end
+    // rather than one empty page later.
+    const rows = await listLinks(c.env.DB, {
+      ...(query.tag === undefined ? {} : { tag: query.tag }),
+      ...(query.active === undefined ? {} : { isActive: query.active ? 1 : 0 }),
+      ...(query.created_after === undefined
+        ? {}
+        : { createdAfter: Date.parse(query.created_after) }),
+      ...(query.external_id === undefined ? {} : { externalId: query.external_id }),
+      ...(after === undefined ? {} : { after }),
+      limit: query.limit + 1,
+    });
+
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
+    const nextCursor =
+      rows.length > query.limit && last !== undefined
+        ? encodeCursor({ createdAt: last.created_at, id: last.id })
+        : null;
+
+    const tags = await findTagNamesForLinks(
+      c.env.DB,
+      page.map((row) => row.id),
+    );
+
+    return c.json(
+      {
+        links: page.map((row) => serializeLink(row, tags.get(row.id) ?? [], c.env.ENVIRONMENT)),
+        next_cursor: nextCursor,
+      },
+      200,
+    );
+  });
+}
+
+/**
+ * Every `/v1/links…` handler, in the one order that works: `methodNotAllowed`
+ * registers `app.all(path)`, and Hono matches in registration order, so both
+ * 405 guards must come **after** every method handler for their path — a GET
+ * declared after the guard would answer 405 instead of listing. Keeping the
+ * whole path family in one function is what stops that from being rediscovered
+ * by a failing test in prompts 15 and 16.
+ */
+export function registerLinkRoutes(app: OpenAPIHono<AppEnv>): void {
+  registerCreateLinkRoute(app);
+  registerListLinksRoute(app);
+  registerGetLinkRoute(app);
+
   methodNotAllowed(app, "/v1/links");
+  methodNotAllowed(app, "/v1/links/:slug");
 }

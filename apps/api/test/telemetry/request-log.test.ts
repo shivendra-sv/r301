@@ -22,17 +22,26 @@ function parsed(): Record<string, unknown> {
 }
 
 describe("per-request log line (PRD §15)", () => {
-  function appWithLink() {
-    const app = createApiApp();
-    app.get("/v1/links/:slug", (c) => c.json({ slug: c.req.param("slug") }));
-    return app;
+  /**
+   * Prompt 14 made `GET /v1/links/:slug` a real route, so this file no longer
+   * stubs one — it seeds the row the real route reads. Same assertions, one
+   * less fixture between them and the code.
+   */
+  async function seedLink(keyId: number): Promise<void> {
+    await testEnv.DB.prepare(
+      `INSERT INTO links (slug, destination, created_by_key_id, created_at, updated_at)
+       VALUES ('aB3xY9k', 'https://clinic.example.com/appt/9182', ?1, 0, 0)`,
+    )
+      .bind(keyId)
+      .run();
   }
 
   async function callLink(): Promise<void> {
-    const { key } = await seedApiKey();
-    await appWithLink().request(
+    const seeded = await seedApiKey();
+    await seedLink(seeded.id);
+    await createApiApp().request(
       "https://api.r301.dev/v1/links/aB3xY9k",
-      { headers: authHeaders(key) },
+      { headers: authHeaders(seeded.key) },
       testBindings(),
     );
   }
@@ -52,8 +61,9 @@ describe("per-request log line (PRD §15)", () => {
   });
 
   it("logs method, status, latency and the request id from the response", async () => {
-    const { key, prefix } = await seedApiKey();
-    const res = await appWithLink().request(
+    const { id, key, prefix } = await seedApiKey();
+    await seedLink(id);
+    const res = await createApiApp().request(
       "https://api.r301.dev/v1/links/aB3xY9k",
       { headers: authHeaders(key) },
       testBindings(),
@@ -84,10 +94,12 @@ describe("per-request log line (PRD §15)", () => {
 
 // Regression guard, not a new behaviour: an unmatched request logs the wildcard
 // template. Swapping routePath() for c.req.path would put the raw slug in logs.
+// The path is one no route claims — `/v1/links/…` is a real route from prompt
+// 14 on, and this test is specifically about the *unmatched* case.
 it("never logs the raw path, even when no route matched", async () => {
   const { key } = await seedApiKey();
   await createApiApp().request(
-    "https://api.r301.dev/v1/links/SECRET_SLUG",
+    "https://api.r301.dev/v1/nosuchcollection/SECRET_SLUG",
     { headers: authHeaders(key) },
     testBindings(),
   );

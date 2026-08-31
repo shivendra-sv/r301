@@ -6,7 +6,7 @@ import { jsonBody } from "../middleware/json-body";
 import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
 import { registerHealthRoute } from "./health";
-import { registerCreateLinkRoute } from "./links";
+import { registerLinkRoutes } from "./links";
 import { apiErrorFromZod } from "../schemas/fields";
 import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
@@ -51,7 +51,7 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
     "/v1/links",
     createIdempotencyMiddleware(options.now === undefined ? {} : { now: options.now }),
   );
-  registerCreateLinkRoute(app);
+  registerLinkRoutes(app);
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);
