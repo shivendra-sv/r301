@@ -1,0 +1,3 @@
+# Monorepo-ready: dashboard (PRD M5) and SDKs (PRD §21) join later as siblings of apps/api.
+packages:
+  - apps/*

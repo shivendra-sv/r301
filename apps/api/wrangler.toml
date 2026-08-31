@@ -1,0 +1,62 @@
+# r301.dev Worker — envs: staging, production (PRD §14, D8).
+# Top-level bindings are for LOCAL dev/tests only (Miniflare) — deploys always use --env.
+# Placeholders shaped <paste: runbook Xn> are filled by docs/runbook.md; they are expected until then.
+
+name = "r301-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+# nodejs_als: AsyncLocalStorage for @sentry/cloudflare — re-verify against current Sentry docs in the Sentry prompt.
+compatibility_flags = ["nodejs_als"]
+workers_dev = false
+
+[vars]
+ENVIRONMENT = "local"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "r301-local"
+database_id = "r301-local" # local only — never deployed
+
+[[kv_namespaces]]
+binding = "REDIRECTS"
+id = "r301-local" # local only — never deployed
+
+# ── staging ──────────────────────────────────────────────────────────────────
+[env.staging]
+name = "r301-api-staging"
+routes = [
+  { pattern = "staging.r301.dev/*", zone_name = "r301.dev" },
+  { pattern = "api-staging.r301.dev/*", zone_name = "r301.dev" },
+]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "r301-staging"
+database_id = "<paste: runbook A3>"
+
+[[env.staging.kv_namespaces]]
+binding = "REDIRECTS"
+id = "<paste: runbook A4>"
+
+# ── production ───────────────────────────────────────────────────────────────
+[env.production]
+name = "r301-api-production"
+routes = [
+  { pattern = "r301.dev/*", zone_name = "r301.dev" },
+  { pattern = "api.r301.dev/*", zone_name = "r301.dev" },
+]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "r301-production"
+database_id = "<paste: runbook A3>"
+
+[[env.production.kv_namespaces]]
+binding = "REDIRECTS"
+id = "<paste: runbook A4>"

@@ -1,0 +1,38 @@
+# Tag v* → production: the manual promote step (PRD §14). Same shape as staging, prod targets.
+name: Deploy production
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Apply D1 migrations (production)
+        run: pnpm --filter @r301/api exec wrangler d1 migrations apply DB --env production --remote
+      - name: Deploy Worker (production)
+        run: pnpm --filter @r301/api exec wrangler deploy --env production
+      - name: Smoke test (production) # post-deploy smoke per PRD §14
+        run: pnpm --filter @r301/api smoke
+        env:
+          SMOKE_API_BASE: https://api.r301.dev
+          SMOKE_REDIRECT_BASE: https://r301.dev
+          SMOKE_API_KEY: ${{ secrets.SMOKE_API_KEY_PRODUCTION }}
