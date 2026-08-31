@@ -9,6 +9,15 @@ export interface Env {
   GIT_SHA?: string;
 }
 
+/** Hono generics shared by every app in this Worker. */
+export interface AppEnv {
+  Bindings: Env;
+  Variables: {
+    /** Set by the request-id middleware; echoed in headers and error envelopes. */
+    requestId: string;
+  };
+}
+
 type WorkerEnv = Env;
 
 declare global {
