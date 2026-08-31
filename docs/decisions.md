@@ -62,6 +62,14 @@ Canonical text for D1–D25 lives in the PRD §5 (v1.0, signed off 31 Aug 2026) 
 
 **Consequences:** anything beyond this list — however small — is a new ADR row (`proposed`) + a PROGRESS.md question first. Version *upgrades* within this set are routine maintenance, not ADRs.
 
+## D28 — `@types/node` joins the approved set · approved 31 Aug 2026 · raised in PROGRESS.md open question #2
+
+**Context:** D27's dev set has no Node type definitions. Prompt 01 worked around this by keeping `vitest.config.ts` free of `node:*` imports (the migrations directory is a cwd-relative string literal). That does not scale: prompt 07's `scripts/mint-key.ts` and `scripts/smoke.ts` run under `tsx` in Node, need `process` / `node:crypto`, and are already inside `tsconfig.json`'s `include`.
+
+**Decision:** `@types/node` is added to the D27 dev-dependency set. Install it in the prompt that first needs it (**07 — key-scripts**), not earlier.
+
+**Consequences:** `scripts/**` stays under `tsc --noEmit` with strict flags. `vitest.config.ts` and `src/**` remain Node-free — Worker code targets workerd, not Node, and nothing in `src/` may import `node:*` without its own ADR.
+
 ---
 
 ## Template for new rows

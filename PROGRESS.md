@@ -49,15 +49,15 @@ Anything that diverged from PRD/docs/prompt — **with a question for Shivendra;
 | # | Date | Session/prompt | What diverged | Why | Approved? |
 |---|---|---|---|---|---|
 | 1 | 2026-08-31 | master | Master-session Phase 2 spec listed `ADMIN_TOKEN` under `wrangler secret put`; the scaffold/runbook omit it | PRD D14 (signed off) removed the admin token and `/v1/keys` from v1 | ✅ yes (Phase 2 gate) |
-| 2 | 2026-08-31 | prompt 01 | `docs/testing.md` §2 says `vitest.config.ts` configures "isolated storage per test". The declarative `isolatedStorage` pool option **no longer exists** in `@cloudflare/vitest-pool-workers` 0.22.0 (absent from its options schema and from `dist/`). Isolation is instead implemented in `test/setup.ts` as `afterEach(reset())` from `cloudflare:test`. | Upstream API change (Vitest 4 / pool 0.22). Required behaviour is unchanged and is now pinned by a test — it was RED (KV value leaked into the next test) before the setup file and GREEN after. | ❓ **Question:** amend `docs/testing.md` §2 to describe the setup-file mechanism rather than a config flag? |
+| 2 | 2026-08-31 | prompt 01 | `docs/testing.md` §2 says `vitest.config.ts` configures "isolated storage per test". The declarative `isolatedStorage` pool option **no longer exists** in `@cloudflare/vitest-pool-workers` 0.22.0 (absent from its options schema and from `dist/`). Isolation is instead implemented in `test/setup.ts` as `afterEach(reset())` from `cloudflare:test`. | Upstream API change (Vitest 4 / pool 0.22). Required behaviour is unchanged and is now pinned by a test — it was RED (KV value leaked into the next test) before the setup file and GREEN after. | ✅ yes (2026-08-31) — `docs/testing.md` §2 amended to describe the setup-file mechanism; the deprecated `SELF`/`env` note in the same section was corrected at the same time. |
 
 ## Open questions for Shivendra
 
 | # | Raised by | Question | Status |
 |---|---|---|---|
 | 1 | master | After runbook A8: what is the actual D1 Time Travel window on the free tier? Record it here + amend PRD §11 note if ≠ 7 d assumption. | open |
-| 2 | prompt 01 | `@types/node` is **not** in D27, so `vitest.config.ts` avoids `node:*` imports (the migrations dir is a cwd-relative literal). Prompt 07's `scripts/*.ts` (mint-key, smoke) run under `tsx` in Node and will need `process`/`node:crypto` types. Add `@types/node` to the approved set then (new ADR row), or keep `scripts/**` out of `tsc`? | open |
-| 3 | prompt 01 | `typescript@7.0.2` is what `latest` resolves to today — a major-version jump. Everything typechecks green under the existing strict flags, and the lockfile pins it. Confirm TS 7 is intended for this project, or pin back to 6.x? | open |
+| 2 | prompt 01 | `@types/node` is **not** in D27, so `vitest.config.ts` avoids `node:*` imports (the migrations dir is a cwd-relative literal). Prompt 07's `scripts/*.ts` (mint-key, smoke) run under `tsx` in Node and will need `process`/`node:crypto` types. Add `@types/node` to the approved set then (new ADR row), or keep `scripts/**` out of `tsc`? | **resolved 2026-08-31 — approved: add `@types/node`** (ADR D28). Install it in prompt 07, not before; `vitest.config.ts` stays `node:*`-free either way. |
+| 3 | prompt 01 | `typescript@7.0.2` is what `latest` resolves to today — a major-version jump. Everything typechecks green under the existing strict flags, and the lockfile pins it. Confirm TS 7 is intended for this project, or pin back to 6.x? | **resolved 2026-08-31 — keep TS 7.** Routine version currency within D27; no ADR needed. |
 
 ## Milestone checklist (mirrors PRD §18)
 
