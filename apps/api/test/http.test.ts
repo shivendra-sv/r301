@@ -1,4 +1,5 @@
 import { exports } from "cloudflare:workers";
+import { authHeaders, seedApiKey, testBindings } from "./helpers/auth";
 import { ApiError, ERROR_STATUS } from "../src/errors";
 import { methodNotAllowed } from "../src/middleware/errors";
 import { createApiApp } from "../src/routes/api";
@@ -15,6 +16,16 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 
 function request(host: string, path: string, init?: RequestInit): Promise<Response> {
   return exports.default.fetch(new Request(`https://${host}${path}`, init));
+}
+
+/** Same, but authenticated — every /v1 route needs a key from prompt 06 on. */
+async function authedRequest(host: string, path: string, init: RequestInit = {}) {
+  const { key } = await seedApiKey();
+
+  return request(host, path, {
+    ...init,
+    headers: { ...authHeaders(key), ...(init.headers ?? {}) },
+  });
 }
 
 describe("X-Request-Id (design.md §8)", () => {
@@ -39,7 +50,7 @@ describe("X-Request-Id (design.md §8)", () => {
 
 describe("error envelope (api-contract §Error envelope)", () => {
   it("renders an unknown /v1 path as a 404 not_found envelope", async () => {
-    const res = await request(API_HOST, "/v1/nope");
+    const res = await authedRequest(API_HOST, "/v1/nope");
 
     expect(res.status).toBe(404);
     expect(res.headers.get("Content-Type")).toMatch(/^application\/json/);
@@ -53,7 +64,7 @@ describe("error envelope (api-contract §Error envelope)", () => {
   });
 
   it("omits `field` when no single field is at fault", async () => {
-    const res = await request(API_HOST, "/v1/nope");
+    const res = await authedRequest(API_HOST, "/v1/nope");
     const body = await res.json<{ error: Record<string, unknown> }>();
 
     expect(body.error).not.toHaveProperty("field");
@@ -138,14 +149,24 @@ describe("405 on a known route shape", () => {
   }
 
   it("serves the registered method normally", async () => {
-    const res = await appWithProbe().request("https://api.r301.dev/v1/_probe");
+    const { key } = await seedApiKey();
+    const res = await appWithProbe().request(
+      "https://api.r301.dev/v1/_probe",
+      { headers: authHeaders(key) },
+      testBindings(),
+    );
 
     expect(res.status).toBe(200);
     expect(res.headers.get("X-Request-Id")).toMatch(UUID);
   });
 
   it("rejects an unregistered method with a method_not_allowed envelope", async () => {
-    const res = await appWithProbe().request("https://api.r301.dev/v1/_probe", { method: "DELETE" });
+    const { key } = await seedApiKey();
+    const res = await appWithProbe().request(
+      "https://api.r301.dev/v1/_probe",
+      { method: "DELETE", headers: authHeaders(key) },
+      testBindings(),
+    );
 
     expect(res.status).toBe(405);
     expect(await res.json()).toEqual({
@@ -158,7 +179,12 @@ describe("405 on a known route shape", () => {
   });
 
   it("still 404s a path that was never registered", async () => {
-    const res = await appWithProbe().request("https://api.r301.dev/v1/_absent", { method: "DELETE" });
+    const { key } = await seedApiKey();
+    const res = await appWithProbe().request(
+      "https://api.r301.dev/v1/_absent",
+      { method: "DELETE", headers: authHeaders(key) },
+      testBindings(),
+    );
 
     expect(res.status).toBe(404);
   });
@@ -176,14 +202,16 @@ describe("JSON-only enforcement", () => {
   // fetch() stamps `text/plain` on a string body, so an absent Content-Type has
   // to be built by deleting the header off the constructed Request.
   async function post(body: string, contentType?: string): Promise<Response> {
+    const { key } = await seedApiKey();
     const req = new Request("https://api.r301.dev/v1/_echo", { method: "POST", body });
+    req.headers.set("Authorization", `Bearer ${key}`);
     if (contentType === undefined) {
       req.headers.delete("Content-Type");
     } else {
       req.headers.set("Content-Type", contentType);
     }
 
-    return await appWithEcho().request(req);
+    return await appWithEcho().request(req, undefined, testBindings());
   }
 
   it("rejects a body sent without a Content-Type", async () => {
@@ -233,8 +261,18 @@ describe("unhandled errors", () => {
     return app;
   }
 
+  async function callBoom(): Promise<Response> {
+    const { key } = await seedApiKey();
+
+    return await appWithBoom().request(
+      "https://api.r301.dev/v1/_boom",
+      { headers: authHeaders(key) },
+      testBindings(),
+    );
+  }
+
   it("renders a thrown error as a 500 internal envelope", async () => {
-    const res = await appWithBoom().request("https://api.r301.dev/v1/_boom");
+    const res = await callBoom();
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
@@ -248,7 +286,7 @@ describe("unhandled errors", () => {
 
   // D23's spirit at the HTTP edge: the client is told nothing about the failure.
   it("leaks neither the thrown message nor a stack trace", async () => {
-    const res = await appWithBoom().request("https://api.r301.dev/v1/_boom");
+    const res = await callBoom();
     const body = await res.text();
 
     expect(body).not.toContain(SECRET);
@@ -257,7 +295,7 @@ describe("unhandled errors", () => {
   });
 
   it("still carries X-Request-Id on the 500", async () => {
-    const res = await appWithBoom().request("https://api.r301.dev/v1/_boom");
+    const res = await callBoom();
 
     expect(res.headers.get("X-Request-Id")).toMatch(UUID);
   });
@@ -275,9 +313,10 @@ describe("thrown ApiError", () => {
   }
 
   it("renders with the status from the code table and the faulting field", async () => {
+    const { key } = await seedApiKey();
     const res = await appThrowing(
       new ApiError("slug_taken", "Slug 'launch' is already in use.", "slug"),
-    ).request("https://api.r301.dev/v1/_raise");
+    ).request("https://api.r301.dev/v1/_raise", { headers: authHeaders(key) }, testBindings());
 
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
@@ -291,8 +330,11 @@ describe("thrown ApiError", () => {
   });
 
   it("omits field when the error names none", async () => {
+    const { key } = await seedApiKey();
     const res = await appThrowing(new ApiError("unauthorized", "Missing API key.")).request(
       "https://api.r301.dev/v1/_raise",
+      { headers: authHeaders(key) },
+      testBindings(),
     );
 
     expect(res.status).toBe(401);

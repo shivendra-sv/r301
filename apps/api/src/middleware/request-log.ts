@@ -15,11 +15,16 @@ export const requestLog: MiddlewareHandler<AppEnv> = async (c, next) => {
 
   await next();
 
+  // Only the prefix, never the key: the prefix is the allowlisted identifier
+  // (PRD §15) and is already stored in plaintext.
+  const keyPrefix = c.get("key")?.prefix;
+
   logRequest({
     request_id: c.get("requestId"),
     route: routePath(c, -1),
     method: c.req.method,
     status: c.res.status,
     latency_ms: Date.now() - startedAt,
+    ...(keyPrefix === undefined ? {} : { key_prefix: keyPrefix }),
   });
 };

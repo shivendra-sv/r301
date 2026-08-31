@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors";
 import { createApiApp } from "../../src/routes/api";
 import { createRedirectApp } from "../../src/routes/redirect";
+import { authHeaders, seedApiKey, testBindings } from "../helpers/auth";
 
 describe("error reporting to Sentry", () => {
   function appReporting(thrown: unknown) {
@@ -21,8 +22,13 @@ describe("error reporting to Sentry", () => {
 
   it("reports an unexpected error", async () => {
     const { app, reported } = appReporting(new Error("kaboom"));
+    const { key } = await seedApiKey();
 
-    const res = await app.request("https://api.r301.dev/v1/_raise");
+    const res = await app.request(
+      "https://api.r301.dev/v1/_raise",
+      { headers: authHeaders(key) },
+      testBindings(),
+    );
 
     expect(res.status).toBe(500);
     expect(reported).toHaveLength(1);
@@ -32,8 +38,13 @@ describe("error reporting to Sentry", () => {
   // Expected, handled outcomes are not incidents — they would drown the signal.
   it("does not report an expected ApiError", async () => {
     const { app, reported } = appReporting(new ApiError("slug_taken", "Slug taken.", "slug"));
+    const { key } = await seedApiKey();
 
-    const res = await app.request("https://api.r301.dev/v1/_raise");
+    const res = await app.request(
+      "https://api.r301.dev/v1/_raise",
+      { headers: authHeaders(key) },
+      testBindings(),
+    );
 
     expect(res.status).toBe(409);
     expect(reported).toEqual([]);
@@ -42,7 +53,10 @@ describe("error reporting to Sentry", () => {
   // design.md §9: no DSN locally means Sentry is never initialised, and the
   // Worker must serve exactly as it would with one.
   it("serves normally with no DSN configured", async () => {
-    const res = await exports.default.fetch(new Request("https://api.r301.dev/v1/nope"));
+    const { key } = await seedApiKey();
+    const res = await exports.default.fetch(
+      new Request("https://api.r301.dev/v1/nope", { headers: authHeaders(key) }),
+    );
 
     expect(res.status).toBe(404);
     expect(await res.json<{ error: { code: string } }>()).toMatchObject({
