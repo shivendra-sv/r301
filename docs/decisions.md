@@ -70,6 +70,17 @@ Canonical text for D1–D25 lives in the PRD §5 (v1.0, signed off 31 Aug 2026) 
 
 **Consequences:** `scripts/**` stays under `tsc --noEmit` with strict flags. `vitest.config.ts` and `src/**` remain Node-free — Worker code targets workerd, not Node, and nothing in `src/` may import `node:*` without its own ADR.
 
+## D29 — Apex stays with the shortener; `/` redirects to the marketing site · approved 31 Aug 2026 · raised in PROGRESS.md open question #4
+
+**Context:** `r301.dev` was serving a Cloudflare Pages static site while PRD §8 assigns the apex to redirects. A Workers route takes precedence over a Pages custom domain on the same hostname, so the production route would have shadowed the site. Shivendra moved the static site to `www.r301.dev` on 31 Aug 2026.
+
+**Decision:**
+1. The apex keeps its PRD §8 role — `https://r301.dev/{slug}` is the redirect host. `wrangler.toml` production routes are unchanged.
+2. The static/marketing site lives at `www.r301.dev` as a Pages custom domain. It is **not** a Worker route and never appears in `wrangler.toml`.
+3. The `/` housekeeping route changes from "pilot: plain landing text" to **`302` → `https://www.r301.dev/`** with `Cache-Control: no-store`. This is the PRD's own "Redirect → docs site (later)" branch (§7.5) exercised now, not a reversal of it.
+
+**Consequences:** `docs/api-contract.md` (redirect-host table) and `docs/design.md` §routing updated; **prompt 12 implements the `/` redirect** and its test. The `/` redirect is housekeeping, not a slug: it is never counted (D21) and bypasses the UA denylist. Nothing else in the redirect matrix moves.
+
 ---
 
 ## Template for new rows

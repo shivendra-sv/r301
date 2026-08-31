@@ -18,7 +18,7 @@ Routing is by hostname inside the Worker: API hosts mount `/v1/*`; redirect host
 
 ```
 GET {redirect-host}/{slug}
-  1. Route housekeeping first: "/" → landing text; "/robots.txt" → "Disallow: /"; "/favicon.ico" → 204.
+  1. Route housekeeping first: "/" → 302 to `https://www.r301.dev/` (D29); "/robots.txt" → "Disallow: /"; "/favicon.ico" → 204.
   2. Parse slug: must match ^[a-zA-Z0-9_-]{3,64}$ (single segment, exact — "/abc/" and "/a/b" → 404).
   3. KV get(slug) → JSON {d, t, x, a}.
      hit  → evaluate below, respond. (~1 KV read, <1 ms CPU)

@@ -147,7 +147,7 @@ OpenAPI 3.1 generated from the Zod schemas (`@hono/zod-openapi`). Once served, i
 | Active link | 301/302/307/308 per `redirect_type` + `Location` (302/307: `Cache-Control: no-store`; 301/308: `public, max-age=3600`) |
 | Expired | 410, "link expired" text, `no-store` |
 | Unknown / deactivated / tombstoned | 404, minimal text, `no-store` |
-| `/` | Pilot: plain landing text |
+| `/` | `302` → `https://www.r301.dev/`, `no-store` (marketing site; never counted — D29) |
 | `/robots.txt` | `Disallow: /` |
 | `/favicon.ico` | 204 |
 

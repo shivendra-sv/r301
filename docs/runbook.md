@@ -17,7 +17,8 @@ pnpm dlx wrangler@latest login
 ### A2 · Cloudflare zone + DNS (PRD §8 hostnames)
 - [x] Add `r301.dev` as a zone in the Cloudflare account (Dashboard → Add site → Free plan). If the domain is registered elsewhere, point its nameservers at the ones Cloudflare assigns; wait for "Active".
 - [x] Create 4 **proxied** placeholder DNS records so Workers routes can attach (Dashboard → DNS → Records) — type `AAAA`, content `100::`, proxy status **Proxied**, for names: `@`, `api`, `staging`, `api-staging`.
-  - Done 31 Aug 2026 for `api`, `staging`, `api-staging`. **`@` was not created as a placeholder** — the apex already carries a proxied CNAME to a Cloudflare Pages static site (verified: all four names resolve to Cloudflare anycast IPs, so routes can attach to all four). A Workers route on `r301.dev/*` would take precedence over that Pages site and shadow it on the first production deploy — **resolve PROGRESS.md open question 4 before deploying production.** Staging is unaffected.
+  - Done 31 Aug 2026 for `api`, `staging`, `api-staging`. **`@` was never created as a placeholder** — the apex already had a proxied CNAME from the Cloudflare Pages static site, which is enough for a Workers route to attach. That site moved to `www.r301.dev` the same day (ADR **D29**), so the apex is now the shortener's, per PRD §8.
+  - **Until the Worker owns production, `https://r301.dev/` returns `522`** — the record is still proxied but has no origin behind it. Harmless pre-launch and it disappears on the first `v*` deploy. If you want it gone sooner, any interim redirect must match the **exact path `/`, never `/*`** — zone-level redirect features run in front of Workers, so a wildcard rule would swallow every short link once the Worker is live. Remove it when prompt 12 ships the `/` redirect.
 
 ### A3 · D1 databases (×2) → paste IDs into `apps/api/wrangler.toml`
 ```bash
