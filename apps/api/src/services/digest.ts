@@ -1,7 +1,6 @@
-// SHA-256 hex, in its own module so idempotency's request hashing (D18) does
-// not grow a private copy. `services/keys.ts` still carries its own identical
-// implementation for api-key hashing (PRD §7.6); folding it in here is
-// PROGRESS question 18 — out of prompt 11's scope, not an oversight.
+// SHA-256 hex — the one implementation. Both callers hash secrets: api-key
+// material (PRD §7.6) and idempotency request bodies (D18). Consolidated per
+// PROGRESS question 18, on the same reasoning as question 17's sampler.
 
 export async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));

@@ -148,7 +148,7 @@ OpenAPI 3.1 generated from the Zod schemas (`@hono/zod-openapi`). Once served, i
 | Expired | 410, "link expired" text, `no-store` |
 | Unknown / deactivated / tombstoned | 404, minimal text, `no-store` |
 | `/` | `302` → `https://www.r301.dev/`, `no-store` (marketing site; never counted — D29) |
-| `/robots.txt` | `Disallow: /` |
-| `/favicon.ico` | 204 |
+| `/robots.txt` | `Disallow: /`, `public, max-age=86400` |
+| `/favicon.ico` | 204, `public, max-age=86400` |
 
 Evaluation order: unknown/tombstoned → 404, inactive → 404, expired → 410 (deactivation outranks expiry). Slug match is exact and single-segment. Incoming query strings are dropped. `HEAD` = `GET` uncounted; other methods → 405 plain text. Only successful 30x GETs passing the UA denylist increment counts (D21).

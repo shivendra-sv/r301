@@ -1,6 +1,7 @@
 // Key material (PRD §7.6). Shared by the auth middleware and, from prompt 07,
 // the mint/revoke scripts — so it stays free of Hono, D1 and `node:*`.
 
+import { sha256Hex } from "./digest";
 import { randomBase62 } from "./random";
 
 /** 32 base62 chars ≈ 190 bits (PRD §7.6). */
@@ -26,10 +27,8 @@ export interface GeneratedKey {
 }
 
 /** SHA-256 hex of the full key. Unsalted is sound at this entropy (PRD §7.6). */
-export async function hashKey(key: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+export function hashKey(key: string): Promise<string> {
+  return sha256Hex(key);
 }
 
 export async function generateKey(environment: KeyEnvironment): Promise<GeneratedKey> {

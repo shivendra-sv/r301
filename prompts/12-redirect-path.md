@@ -12,13 +12,15 @@ Links can be created (10–11). This prompt ships the product's reason to exist:
 
 ## Objective
 
-The redirect surface, complete: housekeeping (`/` landing text, `/robots.txt` → `Disallow: /`, `/favicon.ico` → 204), slug parsing (exact, single-segment), KV-hit evaluation, KV-miss → D1 → conditional backfill, and every row of the response matrix with correct status/`Location`/`Cache-Control`/body.
+The redirect surface, complete: housekeeping (`/` → **302 `https://www.r301.dev/`, `no-store` — ADR D29**, which supersedes this prompt's original "landing text"; `/robots.txt` → `Disallow: /`; `/favicon.ico` → 204), slug parsing (exact, single-segment), KV-hit evaluation, KV-miss → D1 → conditional backfill, and every row of the response matrix with correct status/`Location`/`Cache-Control`/body.
 
 ## Out of scope
 
 - Click counting + UA denylist (13). Any `/v1` route. CDN/cache API usage (design §2 forbids it).
 
 ## Spec references
+
+> **Corrected 1 Sep 2026** (PROGRESS deviation 4, approved): this file was written in master-session Phase 3, before **ADR D29** moved the marketing site to `www.r301.dev` and gave `/` a 302. `docs/api-contract.md` and `docs/design.md` §2 are authoritative; the PRD §7.5 row stays as signed off, with D29 as its amendment record.
 
 - `docs/api-contract.md` §Redirect host — the matrix is the test plan.
 - `docs/design.md` §2: evaluation order (unknown/tombstoned → 404, inactive → 404, expired → 410 — deactivation outranks expiry); query strings dropped; HEAD = GET uncounted; other methods → 405 plain text; `no-store` on all 4xx; 301/308 `public, max-age=3600`, 302/307 `no-store`.
@@ -34,7 +36,7 @@ Invoke **superpowers:test-driven-development**. Table-driven: encode the api-con
 4. KV-hit path serves without touching D1 (stub/spy DB to prove no query on hit).
 5. KV-miss + live row → serves correctly AND backfills KV (`waitOnExecutionContext`, then KV has `{d,t,x,a}`).
 6. KV-miss + unknown slug → 404 and KV **remains empty** for that key. Same for tombstoned.
-7. Housekeeping: `/` → 200 text; `/robots.txt` → `Disallow: /`; `/favicon.ico` → 204 empty.
+7. Housekeeping: `/` → **302 to `https://www.r301.dev/` with `no-store` (D29)**; `/robots.txt` → `Disallow: /`; `/favicon.ico` → 204 empty. Both static routes carry `public, max-age=86400`.
 8. `/abc/` and `/a/b` → 404; slug regex bounds respected; `HEAD /{slug}` → same status/headers, empty body; `POST /{slug}` → 405 plain text.
 9. Every redirect-surface response carries `X-Request-Id`.
 
