@@ -32,7 +32,7 @@ cd apps/api
 pnpm dlx wrangler@latest kv namespace create REDIRECTS --env staging
 pnpm dlx wrangler@latest kv namespace create REDIRECTS --env production
 ```
-- [ ] Paste each printed `id` into the matching `<paste: runbook A4>` slot.
+- [x] Paste each printed `id` into the matching `<paste: runbook A4>` slot.
 
 ### A5 · Sentry (PRD §13, §15)
 - [ ] Create a Sentry project (platform: Cloudflare Workers), name `r301-api`. Copy the DSN.
