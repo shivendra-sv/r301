@@ -2,7 +2,7 @@
 // @hono/zod-openapi's `z` so the OpenAPI document accrues for free (D22).
 
 import { z } from "@hono/zod-openapi";
-import { ERROR_STATUS, type ErrorCode } from "../errors";
+import { ApiError, ERROR_STATUS, type ErrorCode } from "../errors";
 import { isReservedSlug } from "../reserved-slugs";
 import { validateDestination } from "../services/destination";
 
@@ -84,3 +84,27 @@ export const tagsSchema = z
 
 /** D19: free-form and deliberately non-unique. */
 export const externalIdSchema = z.string().max(MAX_EXTERNAL_ID_LENGTH);
+
+/**
+ * Turns a parse failure into the contract's error (api-contract §Error
+ * envelope). Only the first issue is reported: the envelope has room for one
+ * `field`, and a caller fixing errors one at a time re-submits anyway.
+ */
+export function apiErrorFromZod(error: z.ZodError): ApiError {
+  const issue = error.issues[0];
+
+  if (issue === undefined) {
+    return new ApiError("invalid_request", "Request body is invalid.");
+  }
+
+  // An unrecognized key is not addressed by `path` — the key names itself, and
+  // naming it is the whole point of strict requests (D22).
+  const field =
+    issue.code === "unrecognized_keys"
+      ? issue.keys[0]
+      : issue.path.length > 0
+        ? issue.path.join(".")
+        : undefined;
+
+  return new ApiError(apiCodeOf(issue), issue.message, field);
+}

@@ -1,10 +1,12 @@
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { createAuthMiddleware } from "../middleware/auth";
 import { createErrorHandler, notFoundHandler } from "../middleware/errors";
 import { jsonBody } from "../middleware/json-body";
 import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
 import { registerHealthRoute } from "./health";
+import { registerCreateLinkRoute } from "./links";
+import { apiErrorFromZod } from "../schemas/fields";
 import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
 
@@ -20,8 +22,17 @@ export interface ApiAppOptions {
   now?: () => number;
 }
 
-export function createApiApp(options: ApiAppOptions = {}): Hono<AppEnv> {
-  const app = new Hono<AppEnv>();
+export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
+  // defaultHook turns every zod-openapi validation failure into the contract's
+  // envelope — carrying the code the issue was tagged with (prompt 08), so a
+  // reserved slug is 422 and an unknown field 400, from one parse.
+  const app = new OpenAPIHono<AppEnv>({
+    defaultHook: (result) => {
+      if (!result.success) {
+        throw apiErrorFromZod(result.error);
+      }
+    },
+  });
 
   app.use("*", requestId);
   app.use("*", requestLog);
@@ -32,6 +43,7 @@ export function createApiApp(options: ApiAppOptions = {}): Hono<AppEnv> {
   app.use("*", jsonBody);
 
   registerHealthRoute(app);
+  registerCreateLinkRoute(app);
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);
