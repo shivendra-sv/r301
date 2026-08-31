@@ -20,3 +20,12 @@ export function findApiKeyByPrefix(db: D1Database, prefix: string): Promise<ApiK
 export async function touchApiKeyLastUsed(db: D1Database, id: number, at: number): Promise<void> {
   await db.prepare("UPDATE api_keys SET last_used_at = ?2 WHERE id = ?1").bind(id, at).run();
 }
+
+/**
+ * Deliberately NOT filtered by `deleted_at`: `UNIQUE(slug)` spans tombstones,
+ * so a deleted link still owns its slug until the P1 purge cron (D15). Every
+ * *read* path filters tombstones; this existence check must not.
+ */
+export function findLinkIdBySlug(db: D1Database, slug: string): Promise<{ id: number } | null> {
+  return db.prepare("SELECT id FROM links WHERE slug = ?1").bind(slug).first<{ id: number }>();
+}
