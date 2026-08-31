@@ -165,12 +165,12 @@ describe("slug resolution (PRD §7.5, D17)", () => {
 });
 
 describe("KV/D1 contract (D20, design §3)", () => {
-  it("serves a KV hit without querying D1", async () => {
+  it("serves a KV hit without looking the slug up in D1", async () => {
     await seedKv({ slug: "abc123" });
-    let queries = 0;
+    const statements: string[] = [];
     const db = {
       prepare(sql: string) {
-        queries += 1;
+        statements.push(sql);
 
         return testEnv.DB.prepare(sql);
       },
@@ -179,7 +179,11 @@ describe("KV/D1 contract (D20, design §3)", () => {
     const res = await get("/abc123", undefined, bindings({ DB: db }));
 
     expect(res.status).toBe(302);
-    expect(queries).toBe(0);
+    // What D20 forbids is *resolving* a redirect from D1. Since prompt 13 the
+    // click counter's UPDATE is the one statement a KV hit legitimately issues
+    // (PRD §7.4) — so this pins the count at exactly that, and no read.
+    expect(statements.filter((sql) => sql.includes("SELECT"))).toEqual([]);
+    expect(statements).toHaveLength(1);
   });
 
   it("backfills KV from D1 on a miss", async () => {

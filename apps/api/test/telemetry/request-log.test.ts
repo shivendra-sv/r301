@@ -1,5 +1,7 @@
+import { env as testEnv } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApiApp } from "../../src/routes/api";
+import { createRedirectApp } from "../../src/routes/redirect";
 import { authHeaders, seedApiKey, testBindings } from "../helpers/auth";
 
 let lines: string[];
@@ -92,4 +94,56 @@ it("never logs the raw path, even when no route matched", async () => {
 
   expect(lines[0]).not.toContain("SECRET_SLUG");
   expect(parsed().route).toBe("/*");
+});
+
+// Prompt 13 wires `LogFields.ua`, unset since prompt 04 (PROGRESS question 8).
+// D21: the pilot tunes the bot denylist from UAs seen on the redirect path, so
+// that path — and only that path — logs it.
+describe("redirect-path log line (D21, D23)", () => {
+  const WHATSAPP_UA = "WhatsApp/2.24.10.75 A";
+
+  function hit(path: string, headers: Record<string, string> = {}): Promise<Response> {
+    return Promise.resolve(
+      createRedirectApp().request(`https://r301.dev${path}`, { headers }, testBindings()),
+    );
+  }
+
+  it("logs the user-agent", async () => {
+    await hit("/abc123", { "User-Agent": WHATSAPP_UA });
+
+    expect(parsed().ua).toBe(WHATSAPP_UA);
+  });
+
+  it("omits ua entirely when the request sends none", async () => {
+    await hit("/abc123");
+
+    expect(parsed()).not.toHaveProperty("ua");
+  });
+
+  // D23 still holds on this path: the UA joined the allowlist, nothing else did.
+  it("still never logs the destination or the raw slug", async () => {
+    await testEnv.REDIRECTS.put(
+      "abc123",
+      JSON.stringify({ d: "https://clinic.example.com/appt/9182?sig=xyz", t: 302, x: null, a: 1 }),
+    );
+
+    const res = await hit("/abc123", { "User-Agent": WHATSAPP_UA });
+
+    expect(res.status).toBe(302);
+    expect(lines[0]).not.toContain("clinic.example.com");
+    expect(lines[0]).not.toContain("abc123");
+    expect(parsed().route).toBe("/:slug");
+  });
+});
+
+// The API surface keeps the narrower allowlist: D21 scopes the UA to redirects.
+it("never carries the user-agent on the API surface", async () => {
+  const { key } = await seedApiKey();
+  await createApiApp().request(
+    "https://api.r301.dev/v1/links",
+    { headers: { ...authHeaders(key), "User-Agent": "Mozilla/5.0" } },
+    testBindings(),
+  );
+
+  expect(parsed()).not.toHaveProperty("ua");
 });
