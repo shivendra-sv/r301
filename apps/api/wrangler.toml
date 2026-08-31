@@ -35,11 +35,11 @@ ENVIRONMENT = "staging"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "r301-staging"
-database_id = "<paste: runbook A3>"
+database_id = "36fb23a2-670d-46e0-b155-daa4d3faa161"
 
 [[env.staging.kv_namespaces]]
 binding = "REDIRECTS"
-id = "<paste: runbook A4>"
+id = "2d587ad8a04642d3bec14b7edebc6a73"
 
 # ── production ───────────────────────────────────────────────────────────────
 [env.production]
@@ -55,8 +55,8 @@ ENVIRONMENT = "production"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "r301-production"
-database_id = "<paste: runbook A3>"
+database_id = "ebcda0f9-96df-4067-b68a-cb27aac4a4c4"
 
 [[env.production.kv_namespaces]]
 binding = "REDIRECTS"
-id = "<paste: runbook A4>"
+id = "1cf3cd610e8c4bba81c838ced95d7bd5"

@@ -5,17 +5,17 @@ One-time setup only you can do: accounts, DNS, resource creation, secrets, dashb
 ## Phase A — before implementation prompt 01
 
 ### A1 · Tooling
-- [ ] Node ≥ 20 (`node -v`) and pnpm via corepack:
+- [x] Node ≥ 20 (`node -v`) and pnpm via corepack:
 ```bash
 corepack enable
 ```
-- [ ] Authenticate wrangler with the Cloudflare account (browser flow):
+- [x] Authenticate wrangler with the Cloudflare account (browser flow):
 ```bash
 pnpm dlx wrangler@latest login
 ```
 
 ### A2 · Cloudflare zone + DNS (PRD §8 hostnames)
-- [ ] Add `r301.dev` as a zone in the Cloudflare account (Dashboard → Add site → Free plan). If the domain is registered elsewhere, point its nameservers at the ones Cloudflare assigns; wait for "Active".
+- [x] Add `r301.dev` as a zone in the Cloudflare account (Dashboard → Add site → Free plan). If the domain is registered elsewhere, point its nameservers at the ones Cloudflare assigns; wait for "Active".
 - [ ] Create 4 **proxied** placeholder DNS records so Workers routes can attach (Dashboard → DNS → Records) — type `AAAA`, content `100::`, proxy status **Proxied**, for names: `@`, `api`, `staging`, `api-staging`.
 
 ### A3 · D1 databases (×2) → paste IDs into `apps/api/wrangler.toml`
@@ -24,7 +24,7 @@ cd apps/api
 pnpm dlx wrangler@latest d1 create r301-staging
 pnpm dlx wrangler@latest d1 create r301-production
 ```
-- [ ] Paste each printed `database_id` into the matching `<paste: runbook A3>` slot (staging / production env blocks).
+- [x] Paste each printed `database_id` into the matching `<paste: runbook A3>` slot (staging / production env blocks).
 
 ### A4 · KV namespaces (×2) → paste IDs into `apps/api/wrangler.toml`
 ```bash
