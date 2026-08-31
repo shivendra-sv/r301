@@ -1,7 +1,9 @@
 import { Hono } from "hono";
-import { errorHandler, notFoundHandler } from "../middleware/errors";
+import { createErrorHandler, notFoundHandler } from "../middleware/errors";
 import { jsonBody } from "../middleware/json-body";
+import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
+import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
 
 /**
@@ -9,13 +11,19 @@ import type { AppEnv } from "../types";
  * JSON; every error renders the canonical envelope. Routes are added by later
  * prompts — each one registering `methodNotAllowed` for its own path.
  */
-export function createApiApp(): Hono<AppEnv> {
+export interface ApiAppOptions {
+  /** Where unexpected failures are reported. Overridden in tests. */
+  reportError?: (err: unknown) => void;
+}
+
+export function createApiApp(options: ApiAppOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   app.use("*", requestId);
+  app.use("*", requestLog);
   app.use("*", jsonBody);
 
-  app.onError(errorHandler);
+  app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);
 
   return app;

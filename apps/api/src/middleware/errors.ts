@@ -9,13 +9,19 @@ import type { AppEnv } from "../types";
  * reaches the client, leaving the request id as the only handle, which ties the
  * response to the (later) log line and Sentry event.
  */
-export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
-  if (err instanceof ApiError) {
-    return c.json(envelope(err.code, err.message, c.get("requestId"), err.field), err.status);
-  }
+export function createErrorHandler(reportError: (err: unknown) => void): ErrorHandler<AppEnv> {
+  return (err, c) => {
+    // An ApiError is an expected outcome the contract already describes, so it
+    // is answered but never reported — incidents only.
+    if (err instanceof ApiError) {
+      return c.json(envelope(err.code, err.message, c.get("requestId"), err.field), err.status);
+    }
 
-  return c.json(envelope("internal", "An unexpected error occurred.", c.get("requestId")), 500);
-};
+    reportError(err);
+
+    return c.json(envelope("internal", "An unexpected error occurred.", c.get("requestId")), 500);
+  };
+}
 
 export const notFoundHandler: NotFoundHandler<AppEnv> = (c) =>
   c.json(envelope("not_found", "Resource not found.", c.get("requestId")), 404);

@@ -1,5 +1,7 @@
+import { withSentry } from "@sentry/cloudflare";
 import { createApiApp } from "./routes/api";
 import { createRedirectApp } from "./routes/redirect";
+import { sentryOptions } from "./telemetry/sentry";
 import type { Env } from "./types";
 
 const apiApp = createApiApp();
@@ -27,7 +29,7 @@ function isApiRequest(hostname: string, pathname: string): boolean {
   return pathname === "/v1" || pathname.startsWith("/v1/");
 }
 
-export default {
+const handler = {
   fetch(request, env, ctx) {
     const url = new URL(request.url);
     const app = isApiRequest(url.hostname, url.pathname) ? apiApp : redirectApp;
@@ -35,3 +37,7 @@ export default {
     return app.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;
+
+// Returning undefined from the options callback leaves the SDK uninitialised,
+// which is what an absent DSN means locally and in tests (design.md §9).
+export default withSentry((env: Env) => sentryOptions(env), handler);
