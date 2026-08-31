@@ -6,7 +6,8 @@
     "dev": "wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
+    "check:no-node-imports": "if grep -rEn '(from|import|require)[[:space:]]*\\(?[[:space:]]*\"node:' src/; then echo \"D28: src/ must not import node:* (PROGRESS question 12)\"; exit 1; fi",
+    "typecheck": "pnpm run check:no-node-imports && tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "smoke": "tsx scripts/smoke.ts",
     "mint-key": "tsx scripts/mint-key.ts",
     "revoke-key": "tsx scripts/revoke-key.ts"

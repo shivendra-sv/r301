@@ -4,42 +4,15 @@
 import { findLinkIdBySlug } from "../db/queries";
 import { isReservedSlug } from "../reserved-slugs";
 import { apiCodeOf, slugSchema } from "../schemas/fields";
-
-const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+import { randomBase62, type RandomBytes } from "./random";
 
 /** PRD §7.1: 7 chars of base62 ≈ 3.5 × 10¹² slugs. */
 export const SLUG_LENGTH = 7;
 
-/**
- * 248 is the largest multiple of 62 that fits in a byte. Bytes at or above it
- * are discarded rather than folded in with `%`, which would over-represent the
- * first eight characters of the alphabet (62 ∤ 256).
- */
-const REJECT_AT = 248;
+export type { RandomBytes };
 
-/** Fills the buffer in place — same shape as `crypto.getRandomValues`. */
-export type RandomBytes = (bytes: Uint8Array) => void;
-
-const cryptoRandomBytes: RandomBytes = (bytes) => {
-  crypto.getRandomValues(bytes);
-};
-
-export function generateSlug(rng: RandomBytes = cryptoRandomBytes): string {
-  let slug = "";
-
-  while (slug.length < SLUG_LENGTH) {
-    const bytes = new Uint8Array(SLUG_LENGTH);
-    rng(bytes);
-
-    for (const byte of bytes) {
-      if (byte < REJECT_AT) {
-        slug += BASE62[byte % 62];
-        if (slug.length === SLUG_LENGTH) break;
-      }
-    }
-  }
-
-  return slug;
+export function generateSlug(rng?: RandomBytes): string {
+  return randomBase62(SLUG_LENGTH, rng);
 }
 
 /**

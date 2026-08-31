@@ -33,6 +33,7 @@ Invoke **superpowers:test-driven-development**. Behaviors:
 4. The error envelope appears as a component and is referenced by at least the 4xx responses of `/v1/links` post.
 5. Bearer security scheme declared; applied to protected routes; absent on `/v1/health`.
 6. Spec cross-check test: every route registered in the Hono app under `/v1` (introspect the router) appears in the spec — a new route added without spec coverage fails this test forever after.
+7. **405 sweep** (PROGRESS question 5, resolved 31 Aug 2026): assert that **every** registered `/v1` path answers **405**, not 404, to a bogus method. Hono has no built-in 405 — `methodNotAllowed(app, path)` must be called per path after that path's handlers (prompt 03), so a route prompt that forgets it fails silently as a 404. Drive the sweep from the same route list the OpenAPI document is generated from, so a new path cannot escape it.
 
 ## Acceptance criteria
 

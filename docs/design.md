@@ -123,6 +123,7 @@ method === "GET"?  →  UA not matched by denylist?  →  ctx.waitUntil(
 
 - Structured log line (allowlist only): `{request_id, route (template, not raw path), method, status, latency_ms, key_prefix?, ua? (redirect path, pilot only)}`. **Never**: destination URLs, request bodies, query strings, `Authorization`/`Cookie` headers.
 - Sentry (`@sentry/cloudflare`): errors only (`tracesSampleRate: 0`), release = git SHA (CI-injected). A `beforeSend` scrubber strips request bodies, query strings, headers, and any field matching the forbidden set — **pinned by a unit test** (D23). Never weaken it.
+- **URLs inside Sentry events (D23 — approved 31 Aug 2026, PROGRESS deviation 3):** our *own* inbound request URL is reduced to origin + path; it names our host and a slug, which is safe. **Every other URL is dropped outright, breadcrumbs included.** A breadcrumb URL is an *outgoing* fetch — i.e. a destination — and origin + path would still name the destination host (`https://clinic.example.com/…`), which D23 forbids. Reducing is demonstrably insufficient there; dropping is the rule.
 - Free-tier note: log lines are ephemeral (`wrangler tail`); durable forensics = Sentry + D1 state (§15).
 
 ## 10. Module layout (proposed — keep boundaries, adjust names if needed)

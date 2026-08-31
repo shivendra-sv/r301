@@ -1,7 +1,7 @@
 // Key material (PRD §7.6). Shared by the auth middleware and, from prompt 07,
 // the mint/revoke scripts — so it stays free of Hono, D1 and `node:*`.
 
-const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+import { randomBase62 } from "./random";
 
 /** 32 base62 chars ≈ 190 bits (PRD §7.6). */
 const SECRET_LENGTH = 32;
@@ -23,30 +23,6 @@ export interface GeneratedKey {
   key: string;
   prefix: string;
   hash: string;
-}
-
-/**
- * Uniform base62 by rejection sampling. 248 is the largest multiple of 62 that
- * fits in a byte, so bytes at or above it are discarded rather than folded in
- * with `%`, which would bias the first eight characters of the alphabet.
- */
-function randomBase62(length: number): string {
-  let out = "";
-
-  while (out.length < length) {
-    const bytes = crypto.getRandomValues(new Uint8Array(length));
-
-    for (const byte of bytes) {
-      if (byte < 248) {
-        out += BASE62[byte % 62];
-        if (out.length === length) {
-          break;
-        }
-      }
-    }
-  }
-
-  return out;
 }
 
 /** SHA-256 hex of the full key. Unsalted is sound at this entropy (PRD §7.6). */

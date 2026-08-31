@@ -33,7 +33,7 @@ Invoke **superpowers:test-driven-development**. Behaviors:
 3. Denylisted UA → 302 still served, count unchanged. HEAD → served, unchanged. 404/410 paths → unchanged.
 4. Two sequential clicks → count 2 (single-statement increment, no lost update).
 5. Counter failure (stub DB update to throw) → redirect still 302, Sentry captured (spy), nothing propagates.
-6. Redirect log line includes `ua`; API-surface log lines do not.
+6. Redirect log line includes `ua`; API-surface log lines do not. (**This is the prompt that wires it** — `LogFields.ua` has existed unset since prompt 04; PROGRESS question 8, resolved 31 Aug 2026, assigns it here because this prompt already reads the User-Agent for the D21 denylist.)
 
 ## Acceptance criteria
 
