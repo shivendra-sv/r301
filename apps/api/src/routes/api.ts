@@ -1,6 +1,7 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createAuthMiddleware } from "../middleware/auth";
 import { createErrorHandler, notFoundHandler } from "../middleware/errors";
+import { createIdempotencyMiddleware } from "../middleware/idempotency";
 import { jsonBody } from "../middleware/json-body";
 import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
@@ -18,7 +19,7 @@ import type { AppEnv } from "../types";
 export interface ApiAppOptions {
   /** Where unexpected failures are reported. Overridden in tests. */
   reportError?: (err: unknown) => void;
-  /** Clock used for the `last_used_at` staleness window. Injected in tests. */
+  /** Clock for auth's staleness window and the idempotency machine. Injected in tests. */
   now?: () => number;
 }
 
@@ -43,6 +44,13 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
   app.use("*", jsonBody);
 
   registerHealthRoute(app);
+
+  // Registered before the route it guards, so it wraps that handler (D18).
+  // Prompt 17 adds `/v1/links/batch` to the same list.
+  app.use(
+    "/v1/links",
+    createIdempotencyMiddleware(options.now === undefined ? {} : { now: options.now }),
+  );
   registerCreateLinkRoute(app);
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
