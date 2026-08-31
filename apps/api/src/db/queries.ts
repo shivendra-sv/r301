@@ -83,3 +83,12 @@ export async function attachTag(db: D1Database, linkId: number, tagId: number): 
     .bind(linkId, tagId)
     .run();
 }
+
+/**
+ * The redirect fallthrough (design §3). Unfiltered by `deleted_at` on purpose:
+ * the caller must tell a tombstone apart from a live row, because a tombstone
+ * is a 404 that must NOT be backfilled into KV.
+ */
+export function findLinkBySlug(db: D1Database, slug: string): Promise<LinkRow | null> {
+  return db.prepare("SELECT * FROM links WHERE slug = ?1").bind(slug).first<LinkRow>();
+}

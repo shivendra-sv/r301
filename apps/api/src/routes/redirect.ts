@@ -1,9 +1,96 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { findLinkBySlug } from "../db/queries";
 import { ApiError } from "../errors";
+import { getRedirect, putRedirect, redirectEntryFor, type RedirectEntry } from "../kv/redirects-cache";
 import { requestId } from "../middleware/request-id";
 import { requestLog } from "../middleware/request-log";
+import { SLUG_PATTERN } from "../schemas/fields";
+import { evaluateRedirect, NOT_FOUND_CACHE_CONTROL } from "../services/redirect";
 import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
+
+/** D29: the apex keeps its redirect role; `/` sends visitors to the site. */
+const MARKETING_SITE = "https://www.r301.dev/";
+
+const TEXT_PLAIN = "text/plain; charset=UTF-8";
+
+/**
+ * A HEAD is a GET with the body withheld (PRD §7.5) — status and headers must
+ * match exactly, which is why every response is built through here.
+ */
+function respond(
+  c: Context<AppEnv>,
+  status: number,
+  cacheControl: string,
+  body: string | null,
+  extra: Record<string, string> = {},
+): Response {
+  const headers: Record<string, string> = { "Cache-Control": cacheControl, ...extra };
+
+  if (body !== null) {
+    headers["Content-Type"] = TEXT_PLAIN;
+  }
+
+  return new Response(c.req.method === "HEAD" ? null : body, { status, headers });
+}
+
+function notFound(c: Context<AppEnv>): Response {
+  return respond(c, 404, NOT_FOUND_CACHE_CONTROL, "Not found");
+}
+
+/**
+ * Backfill is housekeeping, so it never blocks the response and never fails
+ * one. Awaited only when there is no execution context, which is tests.
+ */
+async function deferBackfill(c: Context<AppEnv>, slug: string, entry: RedirectEntry): Promise<void> {
+  const work = putRedirect(c.env.REDIRECTS, slug, entry).catch(() => undefined);
+
+  try {
+    c.executionCtx.waitUntil(work);
+  } catch {
+    await work;
+  }
+}
+
+async function serveSlug(c: Context<AppEnv>): Promise<Response> {
+  // The generic Context is not tied to the path, so this is optional to TS;
+  // an empty slug fails the pattern below and 404s like any other miss.
+  const slug = c.req.param("slug") ?? "";
+
+  // Exact, single-segment match (D17). `/abc/` and `/a/b` never reach here.
+  if (!SLUG_PATTERN.test(slug)) {
+    return notFound(c);
+  }
+
+  let entry = await getRedirect(c.env.REDIRECTS, slug);
+
+  if (entry === null) {
+    const row = await findLinkBySlug(c.env.DB, slug);
+
+    // No row, or a tombstone (D15): 404 with **no** KV write. Negative caching
+    // would let a slug scanner burn the 1k/day write budget (D20).
+    if (row === null || row.deleted_at !== null) {
+      return notFound(c);
+    }
+
+    entry = redirectEntryFor(row);
+    // Any live row is backfilled, whatever its serving state — KV mirrors D1.
+    await deferBackfill(c, slug, entry);
+  }
+
+  const decision = evaluateRedirect(entry, Date.now());
+
+  if (decision.kind === "notFound") {
+    return notFound(c);
+  }
+  if (decision.kind === "gone") {
+    // Deliberately says what happened (D17): the recipient of a stale
+    // transactional link is helped, and a random slug learns nothing.
+    return respond(c, 410, decision.cacheControl, "This link has expired.");
+  }
+
+  return respond(c, decision.status, decision.cacheControl, null, { Location: decision.location });
+}
 
 export interface RedirectAppOptions {
   /** Where unexpected failures are reported. Overridden in tests. */
@@ -32,7 +119,25 @@ export function createRedirectApp(options: RedirectAppOptions = {}): Hono<AppEnv
     return c.text("Internal error", 500);
   });
 
-  app.notFound((c) => c.text("Not found", 404));
+  // Housekeeping first (design §2 step 1), so these names are never treated
+  // as slugs — `robots.txt` would fail the slug pattern anyway, but ordering
+  // is what makes that a fact rather than a coincidence.
+  app.on(["GET", "HEAD"], "/", (c) =>
+    respond(c, 302, "no-store", null, { Location: MARKETING_SITE }),
+  );
+  app.on(["GET", "HEAD"], "/robots.txt", (c) =>
+    respond(c, 200, "public, max-age=86400", "User-agent: *\nDisallow: /\n"),
+  );
+  app.on(["GET", "HEAD"], "/favicon.ico", (c) => respond(c, 204, "public, max-age=86400", null));
+
+  app.on(["GET", "HEAD"], "/:slug", serveSlug);
+
+  // Registered after the method handlers, so only an unhandled method lands
+  // here (the same contract as the API surface's methodNotAllowed).
+  app.all("/:slug", (c) => respond(c, 405, "no-store", "Method not allowed"));
+  app.all("/", (c) => respond(c, 405, "no-store", "Method not allowed"));
+
+  app.notFound((c) => notFound(c));
 
   return app;
 }

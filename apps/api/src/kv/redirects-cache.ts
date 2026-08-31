@@ -38,3 +38,11 @@ export async function putRedirect(
 export async function removeRedirect(kv: KVNamespace, slug: string): Promise<void> {
   await kv.delete(slug);
 }
+
+/**
+ * The hot-path read. No `cacheTtl` override — it would widen D20's ≤60 s
+ * convergence window, and this is the read that decides what a click does.
+ */
+export function getRedirect(kv: KVNamespace, slug: string): Promise<RedirectEntry | null> {
+  return kv.get<RedirectEntry>(slug, "json");
+}

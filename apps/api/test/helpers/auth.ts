@@ -25,7 +25,11 @@ export function authHeaders(key: string): Record<string, string> {
   return { Authorization: `Bearer ${key}` };
 }
 
-/** Bindings for apps built directly in tests (rather than via the Worker entry). */
+/**
+ * Bindings for apps built directly in tests (rather than via the Worker entry).
+ * REDIRECTS is included because the redirect surface reads KV on every slug
+ * from prompt 12 on — a slug-shaped path with no binding 500s.
+ */
 export function testBindings(): Env {
-  return { DB: testEnv.DB, ENVIRONMENT: "local" } as Env;
+  return { DB: testEnv.DB, REDIRECTS: testEnv.REDIRECTS, ENVIRONMENT: "local" } as Env;
 }

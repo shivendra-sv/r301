@@ -93,7 +93,9 @@ describe("redirect surface telemetry", () => {
       lines.push(String(line));
     });
 
-    await createRedirectApp().request("https://r301.dev/nope");
+    // Bindings are required from prompt 12 on: `/nope` is slug-shaped, so it
+    // is a real KV/D1 lookup rather than a bare 404.
+    await createRedirectApp().request("https://r301.dev/nope", undefined, testBindings());
     spy.mockRestore();
 
     expect(lines).toHaveLength(1);
