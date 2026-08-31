@@ -19,8 +19,8 @@ describe("test environment", () => {
     expect(await env.REDIRECTS.get("harness-probe")).toBeNull();
   });
 
-  // Empty today; prompt 02 adds the first migration. Pins that the chain is
-  // applied from zero on every run (docs/testing.md §2, PRD §14).
+  // Pins that the chain is applied from zero on every run
+  // (docs/testing.md §2, PRD §14). Schema itself: test/schema.test.ts.
   it("applies the migrations chain to the test database", async () => {
     const row = await env.DB.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations'",

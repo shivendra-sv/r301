@@ -6,9 +6,9 @@ Cross-session tracker. Every implementation session **reads this first** and upd
 
 ## Next session
 
-Paste **`prompts/02-d1-schema-migration.md`** into a fresh session.
-Verify first (prompt 01 done-criteria): from repo root `pnpm install`, `pnpm test` (5 green, workers pool), `pnpm typecheck`; then `pnpm --filter @r301/api dev` and `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/anything` → 404.
-The migrations harness is already wired: `apps/api/migrations/` is read by `vitest.config.ts` and applied per-test, so prompt 02's first migration is picked up with no harness changes.
+Paste **`prompts/03-http-foundation.md`** into a fresh session.
+Verify first (prompt 02 done-criteria): from repo root `pnpm test` (18 green, workers pool) and `pnpm typecheck`; then `pnpm --filter @r301/api exec wrangler d1 migrations apply DB --local` → `0001_init.sql ✅`.
+The full PRD §9 schema now exists as `apps/api/migrations/0001_init.sql` and is applied from zero before **every** test, so route/service work can assume real tables. There is still no query helper or `db` module — that arrives in prompt 06+; tests that need rows insert raw SQL for now (see `test/schema.test.ts` helpers).
 
 ## Status
 
@@ -19,7 +19,7 @@ The migrations harness is already wired: `apps/api/migrations/` is read by `vite
 | — | Master session: Phase 3 (prompts 01–20 + M3 stubs 21–28) | done | 2026-08-31 | Serial, task-sized, dependency-ordered |
 | — | Master session: Phase 4 (this tracker) | done | 2026-08-31 | — |
 | 01 | workspace-tooling | done | 2026-08-31 | **Resolved versions:** hono 4.13.5 · zod 4.5.4 · @hono/zod-openapi 1.6.1 · @sentry/cloudflare 10.72.0 · typescript **7.0.2** · wrangler 4.127.1 · @cloudflare/workers-types 5.20260831.1 · vitest 4.1.11 · @cloudflare/vitest-pool-workers 0.22.0 · tsx 4.23.13. 5 tests green in the workers pool. Pool 0.22 requires the **Vitest 4 `cloudflareTest` plugin** API (`defineWorkersConfig` is gone) — storage isolation likewise changed mechanism, see deviation 2. Also: `onlyBuiltDependencies` (workerd, esbuild) added to `pnpm-workspace.yaml` — pnpm 10 blocks their postinstall binaries otherwise; tsconfig `include` widened to `test/**/*.ts` so tests are typechecked too. |
-| 02 | d1-schema-migration | todo | | |
+| 02 | d1-schema-migration | done | 2026-08-31 | `migrations/0001_init.sql` is **byte-identical to the PRD §9 SQL block** (diffed, not eyeballed) — 5 tables, 4 named indexes, no additions. 13 new tests in `test/schema.test.ts`; 18 total. Confirmed empirically: **D1 enforces foreign keys locally** (Miniflare needs no `PRAGMA foreign_keys` — the orphan-insert and cascade tests were RED before the `REFERENCES` clauses and GREEN after). Note `link_tags ON DELETE CASCADE` is **dormant in v1**: D15 deletes are tombstones, so nothing hard-deletes a `links` row until the prompt-28 purge cron — the cascade is tested but unexercised by product code. Beyond the prompt's 6 behaviors, `api_keys.prefix UNIQUE` (D11) also got a test. Stale comment in `harness.test.ts` ("prompt 02 adds the first migration") corrected. No deviations. |
 | 03 | http-foundation | todo | | |
 | 04 | telemetry | todo | | D23 pinned tests land here |
 | 05 | health-and-smoke-v1 | todo | | Completes M0; smoke is health-only until prompt 20 |
