@@ -6,8 +6,9 @@ Cross-session tracker. Every implementation session **reads this first** and upd
 
 ## Next session
 
-Paste **`prompts/01-workspace-tooling.md`** into a fresh session.
-Prerequisite: runbook **A1** (Node ≥ 20 + `corepack enable`). Everything else in runbook Phase A gates *deploys*, not local work — see "Runbook gates" below.
+Paste **`prompts/02-d1-schema-migration.md`** into a fresh session.
+Verify first (prompt 01 done-criteria): from repo root `pnpm install`, `pnpm test` (5 green, workers pool), `pnpm typecheck`; then `pnpm --filter @r301/api dev` and `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/anything` → 404.
+The migrations harness is already wired: `apps/api/migrations/` is read by `vitest.config.ts` and applied per-test, so prompt 02's first migration is picked up with no harness changes.
 
 ## Status
 
@@ -17,7 +18,7 @@ Prerequisite: runbook **A1** (Node ≥ 20 + `corepack enable`). Everything else 
 | — | Master session: Phase 2 (scaffold + CLAUDE.md + 5 docs + CI) | done | 2026-08-31 | D26 (contract elaborations) + D27 (dependency set) recorded |
 | — | Master session: Phase 3 (prompts 01–20 + M3 stubs 21–28) | done | 2026-08-31 | Serial, task-sized, dependency-ordered |
 | — | Master session: Phase 4 (this tracker) | done | 2026-08-31 | — |
-| 01 | workspace-tooling | todo | | Record resolved dependency versions here when done |
+| 01 | workspace-tooling | done | 2026-08-31 | **Resolved versions:** hono 4.13.5 · zod 4.5.4 · @hono/zod-openapi 1.6.1 · @sentry/cloudflare 10.72.0 · typescript **7.0.2** · wrangler 4.127.1 · @cloudflare/workers-types 5.20260831.1 · vitest 4.1.11 · @cloudflare/vitest-pool-workers 0.22.0 · tsx 4.23.13. 5 tests green in the workers pool. Pool 0.22 requires the **Vitest 4 `cloudflareTest` plugin** API (`defineWorkersConfig` is gone) — storage isolation likewise changed mechanism, see deviation 2. Also: `onlyBuiltDependencies` (workerd, esbuild) added to `pnpm-workspace.yaml` — pnpm 10 blocks their postinstall binaries otherwise; tsconfig `include` widened to `test/**/*.ts` so tests are typechecked too. |
 | 02 | d1-schema-migration | todo | | |
 | 03 | http-foundation | todo | | |
 | 04 | telemetry | todo | | D23 pinned tests land here |
@@ -48,12 +49,15 @@ Anything that diverged from PRD/docs/prompt — **with a question for Shivendra;
 | # | Date | Session/prompt | What diverged | Why | Approved? |
 |---|---|---|---|---|---|
 | 1 | 2026-08-31 | master | Master-session Phase 2 spec listed `ADMIN_TOKEN` under `wrangler secret put`; the scaffold/runbook omit it | PRD D14 (signed off) removed the admin token and `/v1/keys` from v1 | ✅ yes (Phase 2 gate) |
+| 2 | 2026-08-31 | prompt 01 | `docs/testing.md` §2 says `vitest.config.ts` configures "isolated storage per test". The declarative `isolatedStorage` pool option **no longer exists** in `@cloudflare/vitest-pool-workers` 0.22.0 (absent from its options schema and from `dist/`). Isolation is instead implemented in `test/setup.ts` as `afterEach(reset())` from `cloudflare:test`. | Upstream API change (Vitest 4 / pool 0.22). Required behaviour is unchanged and is now pinned by a test — it was RED (KV value leaked into the next test) before the setup file and GREEN after. | ❓ **Question:** amend `docs/testing.md` §2 to describe the setup-file mechanism rather than a config flag? |
 
 ## Open questions for Shivendra
 
 | # | Raised by | Question | Status |
 |---|---|---|---|
 | 1 | master | After runbook A8: what is the actual D1 Time Travel window on the free tier? Record it here + amend PRD §11 note if ≠ 7 d assumption. | open |
+| 2 | prompt 01 | `@types/node` is **not** in D27, so `vitest.config.ts` avoids `node:*` imports (the migrations dir is a cwd-relative literal). Prompt 07's `scripts/*.ts` (mint-key, smoke) run under `tsx` in Node and will need `process`/`node:crypto` types. Add `@types/node` to the approved set then (new ADR row), or keep `scripts/**` out of `tsc`? | open |
+| 3 | prompt 01 | `typescript@7.0.2` is what `latest` resolves to today — a major-version jump. Everything typechecks green under the existing strict flags, and the lockfile pins it. Confirm TS 7 is intended for this project, or pin back to 6.x? | open |
 
 ## Milestone checklist (mirrors PRD §18)
 

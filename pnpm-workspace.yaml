@@ -1,3 +1,9 @@
 # Monorepo-ready: dashboard (PRD M5) and SDKs (PRD §21) join later as siblings of apps/api.
 packages:
   - apps/*
+
+# workerd (the Workers runtime that vitest-pool-workers/wrangler execute in) and esbuild
+# ship platform binaries via postinstall; pnpm 10 blocks build scripts unless allowlisted.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
