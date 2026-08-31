@@ -29,7 +29,8 @@ jobs:
       - name: Apply D1 migrations (production)
         run: pnpm --filter @r301/api exec wrangler d1 migrations apply DB --env production --remote
       - name: Deploy Worker (production)
-        run: pnpm --filter @r301/api exec wrangler deploy --env production
+        # GIT_SHA surfaces in GET /v1/health and tags the Sentry release (D25).
+        run: pnpm --filter @r301/api exec wrangler deploy --env production --var GIT_SHA:${{ github.sha }}
       - name: Smoke test (production) # post-deploy smoke per PRD §14
         run: pnpm --filter @r301/api smoke
         env:

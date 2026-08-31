@@ -100,7 +100,9 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent | null {
  * collect cookies, request and response headers, request bodies and URL query
  * params — every one of them forbidden by D23.
  */
-export function sentryOptions(env: Pick<Env, "SENTRY_DSN">): CloudflareOptions | undefined {
+export function sentryOptions(
+  env: Pick<Env, "SENTRY_DSN" | "GIT_SHA">,
+): CloudflareOptions | undefined {
   if (env.SENTRY_DSN === undefined || env.SENTRY_DSN === "") {
     return undefined;
   }
@@ -117,6 +119,8 @@ export function sentryOptions(env: Pick<Env, "SENTRY_DSN">): CloudflareOptions |
       urlQueryParams: false,
     },
     beforeSend: scrubEvent,
+    // The same SHA GET /v1/health reports, so an event names its deploy (D25).
+    ...(env.GIT_SHA === undefined ? {} : { release: env.GIT_SHA }),
   };
 }
 

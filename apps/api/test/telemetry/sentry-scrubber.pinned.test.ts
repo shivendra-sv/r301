@@ -131,3 +131,15 @@ describe("Sentry options (D23)", () => {
     expect(sentryOptions({ SENTRY_DSN: "" })).toBeUndefined();
   });
 });
+
+// design.md §9 / PRD D25: the same SHA that GET /v1/health reports tags the
+// Sentry release, so an event can be traced to a deploy.
+describe("Sentry release", () => {
+  it("tags the release with the deploy SHA", () => {
+    expect(sentryOptions({ SENTRY_DSN: DSN, GIT_SHA: "9f2c1ab" })?.release).toBe("9f2c1ab");
+  });
+
+  it("omits release when no SHA was stamped", () => {
+    expect(sentryOptions({ SENTRY_DSN: DSN })).not.toHaveProperty("release");
+  });
+});

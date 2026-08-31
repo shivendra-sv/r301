@@ -29,7 +29,8 @@ jobs:
       - name: Apply D1 migrations (staging)
         run: pnpm --filter @r301/api exec wrangler d1 migrations apply DB --env staging --remote
       - name: Deploy Worker (staging)
-        run: pnpm --filter @r301/api exec wrangler deploy --env staging
+        # GIT_SHA surfaces in GET /v1/health and tags the Sentry release (D25).
+        run: pnpm --filter @r301/api exec wrangler deploy --env staging --var GIT_SHA:${{ github.sha }}
       - name: Smoke test (staging) # script lands with the M0 CI prompt — see docs/testing.md §5
         run: pnpm --filter @r301/api smoke
         env:

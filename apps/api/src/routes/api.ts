@@ -3,6 +3,7 @@ import { createErrorHandler, notFoundHandler } from "../middleware/errors";
 import { jsonBody } from "../middleware/json-body";
 import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
+import { registerHealthRoute } from "./health";
 import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
 
@@ -22,6 +23,8 @@ export function createApiApp(options: ApiAppOptions = {}): Hono<AppEnv> {
   app.use("*", requestId);
   app.use("*", requestLog);
   app.use("*", jsonBody);
+
+  registerHealthRoute(app);
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);
