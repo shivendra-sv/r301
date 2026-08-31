@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Scripts run under tsx in Node, so they need Node's *globals* — chiefly a
+    // real `process`, which `@cloudflare/workers-types` otherwise declares as
+    // `any`, leaving every `process.env` read unchecked.
+    //
+    // Confining "node" to this config keeps `src/**` and `test/**` compiled
+    // against workerd globals only, which is correct for Worker code. Note it
+    // does NOT stop `src/**` from importing `node:*`: the `types` array governs
+    // global inclusion, not module resolution, and those imports still resolve
+    // once @types/node is in node_modules. See PROGRESS.md open question 12.
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts"]
+}

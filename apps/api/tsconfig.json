@@ -16,5 +16,8 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "*.config.ts"]
+  // scripts/** is checked by tsconfig.scripts.json, which is the only place
+  // Node types are visible. Script modules imported by tests are still checked
+  // here, through those imports, and so must stay Node-free.
+  "include": ["src/**/*.ts", "test/**/*.ts", "*.config.ts"]
 }
