@@ -30,7 +30,9 @@ Every implementation session follows this loop:
 | `pnpm --filter @r301/api dev` | Local Worker (Miniflare-backed local D1/KV) |
 | `pnpm --filter @r301/api test:watch` | TDD loop |
 
-Deploys happen **only via CI**: push to `main` → staging; tag `v*` → production (PRD §14). Never `wrangler deploy` by hand.
+Deploys happen **only via CI**, and **only when a human runs the workflow** (changed 1 Sep 2026 — PROGRESS deviation 6): Actions → *Deploy staging* / *Deploy production* → Run workflow, selecting the ref (a `v*` tag for production). Never `wrangler deploy` by hand.
+
+This diverges from PRD §14's "deploy to staging on merge to `main`" and its tag-triggered promote — the pipeline steps are unchanged, only what starts them. **A merge to `main` no longer ships anything**, so shipping is now an explicit act.
 
 ## Repo map
 

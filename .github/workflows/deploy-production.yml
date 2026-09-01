@@ -1,8 +1,16 @@
-# Tag v* → production: the manual promote step (PRD §14). Same shape as staging, prod targets.
+# production: the promote step (PRD §14). Same shape as staging, prod targets.
+#
+# Manual trigger (changed 1 Sep 2026, Shivendra's call). This was `push: tags:
+# ["v*"]`; pushing a tag no longer deploys. Run it from Actions → Deploy
+# production → Run workflow and **select the `v*` tag** as the ref, so the
+# deployed SHA is the tagged one.
+#
+# ⚠️ Tags created *before* this change (v0.1.0, v0.1.1, v0.2.0) still carry the
+# old push-only trigger in their own tree, so they cannot be dispatched. Only
+# tags cut after this commit are dispatchable.
 name: Deploy production
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

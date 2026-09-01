@@ -13,7 +13,7 @@ Cross-session tracker. Every implementation session **reads this first** and upd
 | **staging** | `api-staging.r301.dev` + `staging.r301.dev` — healthy, `version` = `047714d` |
 | **production** | `api.r301.dev` + `r301.dev` — healthy, `version` = `047714d`, tag `v0.1.1` |
 | **apex** | `r301.dev/` → **302** (the D29 `/` → `www` redirect). The pre-launch 522 is gone. |
-| **CI** | staging (push → main) and production (tag `v*`) both **green end to end, smoke included** |
+| **CI** | both workflows **green end to end, smoke included**. ⚠️ **Manual trigger since 1 Sep 2026** (deviation 6): Actions → Run workflow, selecting the ref. A merge to `main` no longer deploys. Tags cut *before* that change (`v0.1.0`–`v0.2.0`) carry the old push-only trigger in their own tree and cannot be dispatched. |
 | **Runbook** | A1–A6 ✅ · Phase B ✅ · Phase C ✅ (smoke keys) |
 
 ### What actually remains before the Curastax pilot
@@ -79,6 +79,7 @@ Anything that diverged from PRD/docs/prompt — **with a question for Shivendra;
 
 | 4 | 2026-09-01 | prompt 12 | `prompts/12-redirect-path.md` says the objective includes "`/` landing text" and behavior 7 asserts "`/` → 200 text". **ADR D29** (approved 31 Aug 2026) instead makes `/` a `302` → `https://www.r301.dev/` with `no-store`, and both `docs/api-contract.md` (redirect-host table) and `docs/design.md` §2 step 1 were already updated to match. I implemented **D29**. | The prompt file was written in master-session Phase 3, *before* D29 existed; D29's own text says "prompt 12 implements the `/` redirect", so the prompt text — not the decision — is the stale artifact. Docs outrank the prompt in CLAUDE.md's source-of-truth order. | ✅ **yes (2026-09-01)** — D29 confirmed. `prompts/12-redirect-path.md` corrected (objective, behavior 7, and a dated note above §Spec references); **PRD §7.5 left untouched** — it is signed off, and D29 in the ADR log is the post-sign-off amendment mechanism, so editing the PRD would stop the log being the sole record. |
 | 5 | 2026-09-01 | runbook walkthrough | **`docs/testing.md` §5 step 6 contradicts `docs/design.md` §3 / D20.** Testing says the smoke must assert "DELETE → 204; **redirect now 404**" with no delay. Design says KV is an eventually-consistent, rebuildable cache whose convergence window is **≤ 60 s**, which is precisely why the redirect path takes no `cacheTtl` override. A smoke step that deletes and immediately re-reads the edge is therefore asserting something the design explicitly does not promise. **This is not theoretical — it failed the first production deploy** (`GET {redirect}/{slug} after delete: returned 302, expected 404`), and a re-run minutes later passed. D1 showed the link correctly tombstoned and the edge returned 404 once KV converged, so nothing is broken except the assertion's timing assumption. | Per CLAUDE.md I did **not** pick a side unilaterally. | ✅ **resolved 1 Sep 2026 — Shivendra chose option (a).** `docs/testing.md` §5 now has step 7 poll for convergence with capped backoff up to D20's 60 s window, and the code matches; the two docs agree again. |
+| 6 | 2026-09-01 | runbook walkthrough | **Deploys are now manual-trigger only, which diverges from PRD §14.** §14's pipeline says "deploy to staging on merge to `main`" and "manual promote (tag) → production deploy"; both workflows now use `workflow_dispatch` instead of `push: branches: [main]` and `push: tags: [v*]`. Every step inside them is unchanged — typecheck, tests, migrations-before-deploy, post-deploy smoke — only what starts them. | Shivendra's call, made after watching five auto-deploys fire from ordinary pushes during the runbook walkthrough. Merging to `main` no longer ships, so shipping becomes an explicit act. | ✅ **yes — requested directly, 1 Sep 2026** |
 
 ## Open questions for Shivendra
 
@@ -155,7 +156,7 @@ Every **P0** item from PRD §6 and the §8 endpoint summary, mapped to what cove
 
 ## Milestone checklist (mirrors PRD §18)
 
-- [x] **M0 — Foundation** = prompts 01–05 — **complete 31 Aug 2026.** Runbook Phase A+B can now be exercised end-to-end: a push to `main` typechecks, tests, applies migrations, deploys staging and smokes `GET /v1/health`. Phase A2–A6 must be done first or those runs stay red.
+- [x] **M0 — Foundation** = prompts 01–05 — **complete 31 Aug 2026.** Runbook Phase A+B can now be exercised end-to-end: the staging workflow typechecks, tests, applies migrations, deploys and smokes `GET /v1/health`. (It ran on push to `main` until 1 Sep 2026; manual trigger since — deviation 6.) Phase A2–A6 must be done first or those runs stay red.
 - [x] **M1 — Core API** = prompts 06–20 — **complete 1 Sep 2026.** Every P0 endpoint, the redirect path, KV write-through, counting + UA denylist, idempotency, key scripts, the OpenAPI document and the full post-deploy smoke. 776 tests green; `tsc` clean. See the M1 exit sweep above for the item-by-item mapping.
 - [ ] **M2 — Pilot** — no prompts: Curastax integration (their side), runbook Phases B–D, 4-week soak, §17 exit criteria
 - [ ] **M3 — Hardening** = prompts 21–28, detailed after pilot learnings

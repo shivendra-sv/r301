@@ -1,8 +1,11 @@
-# main → staging: re-verify, apply D1 migrations BEFORE deploy (PRD §14), deploy, smoke.
+# staging: re-verify, apply D1 migrations BEFORE deploy (PRD §14), deploy, smoke.
+#
+# Manual trigger (changed 1 Sep 2026, Shivendra's call). This was `push:
+# branches: [main]`; deploys now happen only when someone runs the workflow —
+# Actions → Deploy staging → Run workflow, picking the ref to deploy.
 name: Deploy staging
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
