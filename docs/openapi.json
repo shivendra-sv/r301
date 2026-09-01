@@ -163,33 +163,14 @@
             "example": "https://clinic.example.com/appt/9182?t=abc123"
           },
           "redirect_type": {
-            "anyOf": [
-              {
-                "type": "number",
-                "enum": [
-                  301
-                ]
-              },
-              {
-                "type": "number",
-                "enum": [
-                  302
-                ]
-              },
-              {
-                "type": "number",
-                "enum": [
-                  307
-                ]
-              },
-              {
-                "type": "number",
-                "enum": [
-                  308
-                ]
-              }
-            ],
+            "type": "integer",
             "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+            "enum": [
+              301,
+              302,
+              307,
+              308
+            ],
             "example": 302
           },
           "is_active": {
@@ -315,82 +296,21 @@
           "items": {
             "type": "array",
             "items": {
-              "anyOf": [
+              "oneOf": [
                 {
-                  "type": "object",
-                  "properties": {
-                    "index": {
-                      "type": "integer",
-                      "description": "The zero-based position of this item in the `links` array you sent. Results are returned in request order, so this is also its index here — match on it rather than assuming.",
-                      "example": 0
-                    },
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "created"
-                      ],
-                      "description": "This item was created.",
-                      "example": "created"
-                    },
-                    "link": {
-                      "$ref": "#/components/schemas/Link"
-                    }
-                  },
-                  "required": [
-                    "index",
-                    "status",
-                    "link"
-                  ]
+                  "$ref": "#/components/schemas/BatchItemCreated"
                 },
                 {
-                  "type": "object",
-                  "properties": {
-                    "index": {
-                      "type": "integer",
-                      "description": "The zero-based position of this item in the `links` array you sent.",
-                      "example": 1
-                    },
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "error"
-                      ],
-                      "description": "This item failed; the others were unaffected.",
-                      "example": "error"
-                    },
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string",
-                          "description": "The same code vocabulary as the error envelope — most often `slug_taken`, `slug_reserved`, `destination_invalid` or `invalid_request`.",
-                          "example": "slug_taken"
-                        },
-                        "message": {
-                          "type": "string",
-                          "description": "A human-readable explanation of why this one item failed.",
-                          "example": "Slug 'launch' is already in use."
-                        },
-                        "field": {
-                          "type": "string",
-                          "description": "The field of this item at fault, when exactly one is.",
-                          "example": "slug"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "description": "Why this item failed."
-                    }
-                  },
-                  "required": [
-                    "index",
-                    "status",
-                    "error"
-                  ]
+                  "$ref": "#/components/schemas/BatchItemFailed"
                 }
-              ]
+              ],
+              "discriminator": {
+                "propertyName": "status",
+                "mapping": {
+                  "created": "#/components/schemas/BatchItemCreated",
+                  "error": "#/components/schemas/BatchItemFailed"
+                }
+              }
             },
             "description": "One result per submitted item, in request order. Each is either a `created` entry carrying the link, or an `error` entry carrying the reason."
           },
@@ -456,6 +376,87 @@
             "failed": 1
           }
         }
+      },
+      "BatchItemCreated": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "The zero-based position of this item in the `links` array you sent. Results are returned in request order, so this is also its index here — match on it rather than assuming.",
+            "example": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "created"
+            ],
+            "description": "This item was created.",
+            "example": "created"
+          },
+          "link": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Link"
+              },
+              {
+                "description": "The created link, identical to what a single create would have returned."
+              }
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "status",
+          "link"
+        ]
+      },
+      "BatchItemFailed": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "The zero-based position of this item in the `links` array you sent.",
+            "example": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "error"
+            ],
+            "description": "This item failed; the others were unaffected.",
+            "example": "error"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The same code vocabulary as the error envelope — most often `slug_taken`, `slug_reserved`, `destination_invalid` or `invalid_request`.",
+                "example": "slug_taken"
+              },
+              "message": {
+                "type": "string",
+                "description": "A human-readable explanation of why this one item failed.",
+                "example": "Slug 'launch' is already in use."
+              },
+              "field": {
+                "type": "string",
+                "description": "The field of this item at fault, when exactly one is.",
+                "example": "slug"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "Why this item failed."
+          }
+        },
+        "required": [
+          "index",
+          "status",
+          "error"
+        ]
       },
       "LinkStats": {
         "type": "object",
@@ -724,34 +725,14 @@
                     ]
                   },
                   "redirect_type": {
-                    "anyOf": [
-                      {
-                        "type": "number",
-                        "enum": [
-                          301
-                        ]
-                      },
-                      {
-                        "type": "number",
-                        "enum": [
-                          302
-                        ]
-                      },
-                      {
-                        "type": "number",
-                        "enum": [
-                          307
-                        ]
-                      },
-                      {
-                        "type": "number",
-                        "enum": [
-                          308
-                        ]
-                      }
-                    ],
-                    "default": 302,
+                    "type": "integer",
                     "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+                    "enum": [
+                      301,
+                      302,
+                      307,
+                      308
+                    ],
                     "example": 302
                   },
                   "expires_at": {
@@ -1175,11 +1156,12 @@
           },
           {
             "schema": {
-              "type": "string",
-              "pattern": "^\\d+$",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
               "default": 25,
-              "description": "How many links to return, 1–100. Defaults to 25. A full page does not imply more results — check `next_cursor` for that.",
-              "example": "25"
+              "example": 25,
+              "description": "How many links to return, 1–100. Defaults to 25. A full page does not imply more results — check `next_cursor` for that."
             },
             "required": false,
             "description": "How many links to return, 1–100. Defaults to 25. A full page does not imply more results — check `next_cursor` for that.",
@@ -1408,23 +1390,12 @@
                         },
                         "redirect_type": {
                           "default": 302,
-                          "anyOf": [
-                            {
-                              "type": "number",
-                              "const": 301
-                            },
-                            {
-                              "type": "number",
-                              "const": 302
-                            },
-                            {
-                              "type": "number",
-                              "const": 307
-                            },
-                            {
-                              "type": "number",
-                              "const": 308
-                            }
+                          "type": "integer",
+                          "enum": [
+                            301,
+                            302,
+                            307,
+                            308
                           ],
                           "title": "Redirect status",
                           "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
@@ -2154,33 +2125,14 @@
                     ]
                   },
                   "redirect_type": {
-                    "anyOf": [
-                      {
-                        "type": "number",
-                        "enum": [
-                          301
-                        ]
-                      },
-                      {
-                        "type": "number",
-                        "enum": [
-                          302
-                        ]
-                      },
-                      {
-                        "type": "number",
-                        "enum": [
-                          307
-                        ]
-                      },
-                      {
-                        "type": "number",
-                        "enum": [
-                          308
-                        ]
-                      }
-                    ],
+                    "type": "integer",
                     "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+                    "enum": [
+                      301,
+                      302,
+                      307,
+                      308
+                    ],
                     "example": 302
                   },
                   "expires_at": {

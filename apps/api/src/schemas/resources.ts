@@ -155,7 +155,13 @@ export const batchResultSchema = z
   .object({
     items: z
       .array(
-        z.union([
+        // Discriminated on `status` rather than a plain union: a plain union
+        // emits two untitled `object` branches, which renderers show as
+        // "Any of object / object" with no way to tell which is which.
+        // Registering each branch as a named component is what earns a real
+        // OpenAPI `discriminator` with a `mapping`, so tools can label the two
+        // outcomes and generate a tagged union instead of a shapeless one.
+        z.discriminatedUnion("status", [
           z.object({
             index: z.int().meta({
               description:
@@ -168,8 +174,10 @@ export const batchResultSchema = z
               description: "This item was created.",
               example: "created",
             }),
-            link: linkResourceSchema,
-          }),
+            link: linkResourceSchema.meta({
+              description: "The created link, identical to what a single create would have returned.",
+            }),
+          }).openapi("BatchItemCreated"),
           z.object({
             index: z.int().meta({
               description: "The zero-based position of this item in the `links` array you sent.",
@@ -182,7 +190,7 @@ export const batchResultSchema = z
             error: batchItemErrorSchema.meta({
               description: "Why this item failed.",
             }),
-          }),
+          }).openapi("BatchItemFailed"),
         ]),
       )
       .meta({

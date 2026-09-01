@@ -99,9 +99,27 @@ export const slugSchema = z
   });
 
 /** D5: 302 is the default, applied by the create schema — not here. */
+/**
+ * The union is what validates; the `.meta()` is what gets published.
+ *
+ * Left as a union of single literals because that is the shape the rest of the
+ * code is typed against, but its *emitted* schema is overridden: the union
+ * renders as four indistinguishable `anyOf: [{type: number, enum: [N]}]`
+ * branches, which documentation tools show as "Any of number / number / number
+ * / number". A fixed set of values is one `enum`, and that is what clients see.
+ *
+ * `z.literal([301, 302, 307, 308])` looks like the tidier fix and is **wrong
+ * here**: @hono/zod-openapi 1.6.1 converts a multi-value literal by keeping
+ * only its first value, so the document would advertise `enum: [301]` and
+ * silently deny three statuses the API accepts. `openapi-richness.test.ts`
+ * cross-checks the published enum against what the schema actually parses, so
+ * that regression cannot come back quietly.
+ */
 export const redirectTypeSchema = z
   .union([z.literal(301), z.literal(302), z.literal(307), z.literal(308)])
   .meta({
+    type: "integer",
+    enum: [301, 302, 307, 308],
     title: "Redirect status",
     description:
       "The HTTP status the redirect answers with. Defaults to `302`.\n\n"

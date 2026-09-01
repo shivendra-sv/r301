@@ -3,12 +3,26 @@
 import { z } from "@hono/zod-openapi";
 import { MAX_EXTERNAL_ID_LENGTH } from "./fields";
 
-/** Query values are always strings, so the numeric bound is applied after. */
+/**
+ * Query values are always strings, so the numeric bound is applied after.
+ *
+ * Documented as an `integer` with its real bounds: a client sees `limit: 1–100,
+ * default 25`, which is both what the API enforces and what every OpenAPI
+ * generator expects of a numeric query parameter. Without the override the
+ * document published `type: string, pattern: ^\d+$` and hid the 1–100 range
+ * entirely, since the bounds live past the `transform` where the input schema
+ * cannot see them.
+ *
+ * `.refine` rather than `.regex` for the same reason: `.regex` leaves a
+ * `pattern` on the emitted schema, and a pattern next to `type: integer` is
+ * inert under JSON Schema but renders as a contradiction.
+ */
 const limitSchema = z
   .string()
-  .regex(/^\d+$/, "limit must be a whole number.")
+  .refine((value) => /^\d+$/.test(value), "limit must be a whole number.")
   .transform(Number)
-  .pipe(z.int().min(1).max(100));
+  .pipe(z.int().min(1).max(100))
+  .meta({ type: "integer", minimum: 1, maximum: 100, default: 25, example: 25 });
 
 /**
  * Exactly `"true"` or `"false"`. Accepting `1`/`yes`/`TRUE` would make a
@@ -56,10 +70,14 @@ export const listLinksQuerySchema = z
       example: "eyJjIjoxNzU2NjM2ODAwMDAwLCJpIjo0MjF9",
     }),
     limit: limitSchema.default(25).meta({
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+      default: 25,
+      example: 25,
       description:
         "How many links to return, 1–100. Defaults to 25. A full page does not imply more "
         + "results — check `next_cursor` for that.",
-      example: "25",
     }),
   })
   .strict()

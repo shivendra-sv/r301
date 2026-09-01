@@ -14,11 +14,16 @@ import { env as testEnv } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ERROR_STATUS } from "../../src/errors";
 import { IDEMPOTENT_PATHS } from "../../src/middleware/idempotency";
+import { redirectTypeSchema } from "../../src/schemas/fields";
 import { createApiApp } from "../../src/routes/api";
 import type { Env } from "../../src/types";
 
 interface SchemaObject {
   $ref?: string;
+  title?: string;
+  default?: unknown;
+  allOf?: SchemaObject[];
+  discriminator?: { propertyName: string; mapping?: Record<string, string> };
   type?: string | string[];
   description?: string;
   example?: unknown;
@@ -165,6 +170,29 @@ function describableProperties(
  * `examples` (the JSON Schema form, which is what `z.meta({ examples: [...] })`
  * emits). Any one of them is a worked example a client can copy.
  */
+/**
+ * The prose a reader actually sees for a property. A description may sit on the
+ * node itself, on an `allOf` member beside a `$ref` (which is how a described
+ * reference to a shared component is composed), or on the component the `$ref`
+ * points at — a reference to a documented schema is documented, and demanding a
+ * duplicate sentence on the reference would only add text to maintain.
+ */
+function descriptionOf(schema: SchemaObject, document: OpenApiDocument): string {
+  if (typeof schema.description === "string") return schema.description;
+
+  for (const member of schema.allOf ?? []) {
+    const nested = descriptionOf(member, document);
+    if (nested !== "") return nested;
+  }
+
+  if (schema.$ref !== undefined) {
+    const target = deref(schema, document);
+    if (target !== schema && typeof target.description === "string") return target.description;
+  }
+
+  return "";
+}
+
 function hasExample(media: MediaTypeObject | undefined): boolean {
   if (media === undefined) return false;
 
@@ -312,7 +340,7 @@ describe("request bodies", () => {
       if (schema === undefined) continue;
 
       for (const [name, property] of describableProperties(schema, document)) {
-        if ((property.description?.length ?? 0) < 15) {
+        if (descriptionOf(property, document).length < 15) {
           undescribed.push(`${method.toUpperCase()} ${path} → ${name}`);
         }
       }
@@ -357,7 +385,7 @@ describe("responses", () => {
 
     for (const [name, schema] of Object.entries(document.components?.schemas ?? {})) {
       for (const [property, value] of describableProperties(schema, document)) {
-        if ((value.description?.length ?? 0) < 15) undescribed.push(`${name}.${property}`);
+        if (descriptionOf(value, document).length < 15) undescribed.push(`${name}.${property}`);
       }
     }
 
@@ -452,5 +480,136 @@ describe("the error envelope explains itself", () => {
     );
 
     expect(codes.sort()).toEqual(["idempotency_conflict", "slug_taken"]);
+  });
+});
+
+/**
+ * Renderer-hostile shapes. Every finding here is something that is *valid*
+ * OpenAPI and still useless to read: the document is only worth having if a
+ * client can understand it in the tool they actually open it in.
+ */
+describe("the document renders legibly", () => {
+  /** Walks every schema node in the document, wherever it sits. */
+  function schemaNodes(document: OpenApiDocument): [string, SchemaObject][] {
+    const out: [string, SchemaObject][] = [];
+
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((child, i) => walk(child, `${path}[${i}]`));
+        return;
+      }
+
+      if (typeof node !== "object" || node === null) return;
+
+      const record = node as Record<string, unknown>;
+
+      if ("type" in record || "anyOf" in record || "oneOf" in record || "$ref" in record) {
+        out.push([path, record as SchemaObject]);
+      }
+
+      for (const [key, value] of Object.entries(record)) walk(value, `${path}.${key}`);
+    };
+
+    walk(document.paths, "paths");
+    walk(document.components?.schemas ?? {}, "components");
+
+    return out;
+  }
+
+  it("never offers a choice between branches a reader cannot tell apart", async () => {
+    const document = await doc();
+    const indistinguishable: string[] = [];
+
+    for (const [path, schema] of schemaNodes(document)) {
+      const branches = schema.anyOf ?? schema.oneOf;
+      if (branches === undefined || branches.length < 2) continue;
+
+      // What a renderer prints for each branch: its ref, its title, or — the
+      // failure case — nothing but a bare type.
+      const labels = branches.map((b) => b.$ref ?? b.title ?? String(b.type));
+
+      if (new Set(labels).size === 1) {
+        indistinguishable.push(`${path} → ${branches.length} × "${labels[0]}"`);
+      }
+    }
+
+    expect(indistinguishable).toEqual([]);
+  });
+
+  it("never states a default that contradicts its own declared type", async () => {
+    const document = await doc();
+    const contradictory: string[] = [];
+    const matches: Record<string, (v: unknown) => boolean> = {
+      string: (v) => typeof v === "string",
+      integer: (v) => Number.isInteger(v),
+      number: (v) => typeof v === "number",
+      boolean: (v) => typeof v === "boolean",
+      array: (v) => Array.isArray(v),
+      object: (v) => typeof v === "object" && v !== null && !Array.isArray(v),
+      null: (v) => v === null,
+    };
+
+    for (const [path, schema] of schemaNodes(document)) {
+      if (schema.default === undefined || schema.type === undefined) continue;
+
+      const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+
+      if (!types.some((t) => matches[t]?.(schema.default) ?? true)) {
+        contradictory.push(`${path}: type=${JSON.stringify(schema.type)} default=${JSON.stringify(schema.default)}`);
+      }
+    }
+
+    expect(contradictory).toEqual([]);
+  });
+
+  it("gives the batch item union a discriminator, so its two outcomes are labelled", async () => {
+    const items = (await doc()).components?.schemas?.["BatchResult"]?.properties?.["items"]?.items;
+
+    expect(items?.discriminator?.propertyName).toBe("status");
+    expect(Object.keys(items?.discriminator?.mapping ?? {}).sort()).toEqual(["created", "error"]);
+  });
+});
+
+/**
+ * A generic sweep cannot catch a schema that is *narrower* than the code —
+ * it looks perfectly well-formed. This is the specific guard: the published
+ * set of redirect statuses is compared against the set the schema actually
+ * parses, in both directions.
+ *
+ * It exists because `z.literal([301, 302, 307, 308])` — the obvious way to
+ * write this — is converted by @hono/zod-openapi 1.6.1 into `enum: [301]`,
+ * silently denying three statuses the API accepts.
+ */
+describe("published values match the values the code accepts", () => {
+  /** Every HTTP status in range, so neither direction is a restatement. */
+  const CANDIDATES = Array.from({ length: 500 }, (_, i) => i + 100);
+
+  it("documents exactly the redirect statuses redirect_type parses", async () => {
+    const accepted = CANDIDATES.filter((v) => redirectTypeSchema.safeParse(v).success);
+    const document = await doc();
+
+    expect(accepted).toEqual([301, 302, 307, 308]);
+
+    const published = document.components?.schemas?.["Link"]?.properties?.["redirect_type"]?.enum;
+
+    expect(published).toBeDefined();
+    expect([...(published ?? [])].sort()).toEqual([...accepted].sort());
+  });
+
+  it("documents the same set on the request bodies that accept it", async () => {
+    const document = await doc();
+
+    for (const [path, method] of [
+      ["/v1/links", "post"],
+      ["/v1/links/{slug}", "patch"],
+    ] as const) {
+      const schema = document.paths[path]?.[method]?.requestBody?.content?.["application/json"]
+        ?.schema?.properties?.["redirect_type"];
+
+      expect({ path, values: [...(schema?.enum ?? [])].sort() }).toEqual({
+        path,
+        values: [301, 302, 307, 308],
+      });
+    }
   });
 });

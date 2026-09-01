@@ -7,9 +7,51 @@ import { createLinkSchema } from "./create-link";
 export const MAX_BATCH_ITEMS = 100;
 
 /**
+ * Drops an `anyOf`/`oneOf` from any node that also declares a concrete `type`
+ * with an `enum`.
+ *
+ * Such a node comes from a schema whose `.meta()` overrides how it is
+ * published — `redirectTypeSchema` is a union of four literals presented as one
+ * `enum`. `z.toJSONSchema` *merges* that metadata rather than replacing the
+ * branches, leaving a node carrying both. The two agree, so nothing is lost by
+ * dropping the branches; leaving them in means this one path publishes the
+ * four-way `anyOf` that every other path stopped publishing, which is exactly
+ * the "Any of number / number / number / number" rendering the override exists
+ * to remove.
+ *
+ * Deliberately narrow: only a node that states both `type` and `enum` — that
+ * is, one whose author said explicitly what it is — has its branches removed.
+ */
+function withoutRedundantBranches(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map(withoutRedundantBranches);
+  }
+
+  if (typeof node !== "object" || node === null) {
+    return node;
+  }
+
+  const entries = Object.entries(node as Record<string, unknown>);
+  const record = Object.fromEntries(
+    entries.map(([key, value]) => [key, withoutRedundantBranches(value)]),
+  );
+
+  if (record["type"] !== undefined && Array.isArray(record["enum"])) {
+    delete record["anyOf"];
+    delete record["oneOf"];
+  }
+
+  return record;
+}
+
+/**
  * The create body as JSON Schema, attached to the item type below as
  * documentation only. Nested `$schema` is stripped: it is meaningful at a
  * document's root, and prompt 19 owns that root.
+ *
+ * This is a second conversion path — the route bodies go through
+ * @hono/zod-openapi, this goes through `z.toJSONSchema` directly — so it needs
+ * the normalisation above to publish the same shapes the other path does.
  */
 function createBodyJsonSchema(): Record<string, unknown> {
   const { $schema: _root, ...rest } = z.toJSONSchema(createLinkSchema, { io: "input" }) as Record<
@@ -17,7 +59,7 @@ function createBodyJsonSchema(): Record<string, unknown> {
     unknown
   >;
 
-  return rest;
+  return withoutRedundantBranches(rest) as Record<string, unknown>;
 }
 
 /**
