@@ -44,5 +44,5 @@ jobs:
         # upload lands as a *preview* deployment and www.r301.dev never updates.
         run: >-
           pnpm --filter @r301/api exec wrangler pages deploy apps/www
-          --project-name=<paste: runbook W1>
+          --project-name=r301
           --branch=main
