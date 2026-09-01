@@ -51,7 +51,7 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
     "/v1/links",
     createIdempotencyMiddleware(options.now === undefined ? {} : { now: options.now }),
   );
-  registerLinkRoutes(app);
+  registerLinkRoutes(app, options.now === undefined ? {} : { now: options.now });
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);

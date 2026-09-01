@@ -1,10 +1,12 @@
 import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
 import {
   attachTag,
+  detachAllTags,
   findLiveLinkBySlug,
   findTagNamesForLinks,
   insertLink,
   listLinks,
+  updateLink,
   upsertTag,
 } from "../db/queries";
 import { ApiError } from "../errors";
@@ -12,6 +14,7 @@ import { putRedirect, redirectEntryFor } from "../kv/redirects-cache";
 import { methodNotAllowed } from "../middleware/errors";
 import { createLinkSchema } from "../schemas/create-link";
 import { listLinksQuerySchema } from "../schemas/list-query";
+import { patchLinkSchema } from "../schemas/patch-link";
 import { serializeLink } from "../serializers/link";
 import { decodeCursor, encodeCursor } from "../services/cursor";
 import { resolveSlug } from "../services/slugs";
@@ -204,6 +207,97 @@ function registerListLinksRoute(app: OpenAPIHono<AppEnv>): void {
   });
 }
 
+export const patchLinkRoute = createRoute({
+  method: "patch",
+  path: "/v1/links/{slug}",
+  summary: "Update a link",
+  request: {
+    params: slugParamSchema,
+    body: {
+      required: true,
+      content: { "application/json": { schema: patchLinkSchema } },
+    },
+  },
+  responses: {
+    200: { description: "The updated link." },
+    400: { description: "Empty body, unknown field (including `slug`) or bad value." },
+    401: { description: "Missing or invalid API key." },
+    404: { description: "No such link, or it has been deleted." },
+    422: { description: "The new destination failed validation." },
+  },
+});
+
+/**
+ * Attaches `names` in the order given, after clearing what was there — `tags`
+ * replaces the set rather than merging it (D26.5). Order is preserved because
+ * the Link resource reads tags back in attach order (see PROGRESS question 21),
+ * so a round-trip through PATCH must not reshuffle them.
+ */
+async function replaceTags(
+  db: D1Database,
+  linkId: number,
+  names: readonly string[],
+): Promise<void> {
+  await detachAllTags(db, linkId);
+
+  for (const name of names) {
+    const tag = await upsertTag(db, name);
+    if (tag === null) {
+      throw new Error(`tag upsert produced no row for '${name}'`);
+    }
+    await attachTag(db, linkId, tag.id);
+  }
+}
+
+function registerPatchLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): void {
+  app.openapi(patchLinkRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    const body = c.req.valid("json");
+
+    const existing = await findLiveLinkBySlug(c.env.DB, slug);
+
+    if (existing === null) {
+      throw new ApiError("not_found", "Resource not found.");
+    }
+
+    const row = await updateLink(
+      c.env.DB,
+      existing.id,
+      {
+        ...(body.destination === undefined ? {} : { destination: body.destination }),
+        ...(body.redirect_type === undefined ? {} : { redirectType: body.redirect_type }),
+        ...(body.expires_at === undefined
+          ? {}
+          : { expiresAt: body.expires_at === null ? null : Date.parse(body.expires_at) }),
+        ...(body.is_active === undefined ? {} : { isActive: body.is_active ? 1 : 0 }),
+        ...(body.external_id === undefined ? {} : { externalId: body.external_id }),
+      },
+      now(),
+    );
+
+    if (row === null) {
+      // Tombstoned between the lookup and the write.
+      throw new ApiError("not_found", "Resource not found.");
+    }
+
+    if (body.tags !== undefined) {
+      await replaceTags(c.env.DB, row.id, body.tags);
+    }
+
+    // Read back rather than echoing `body.tags`: `link_tags` is keyed
+    // (link_id, tag_id), so `["b","b"]` stores one row, and echoing would
+    // report a set the next GET disagrees with.
+    const tags = (await findTagNamesForLinks(c.env.DB, [row.id])).get(row.id) ?? [];
+
+    // D20, exactly as create: D1 has committed, the put is awaited, and its
+    // failure is the request's failure. The updated row stays behind — an
+    // identical PATCH is naturally idempotent and converges.
+    await putRedirect(c.env.REDIRECTS, row.slug, redirectEntryFor(row));
+
+    return c.json(serializeLink(row, tags, c.env.ENVIRONMENT), 200);
+  });
+}
+
 /**
  * Every `/v1/links…` handler, in the one order that works: `methodNotAllowed`
  * registers `app.all(path)`, and Hono matches in registration order, so both
@@ -212,10 +306,19 @@ function registerListLinksRoute(app: OpenAPIHono<AppEnv>): void {
  * whole path family in one function is what stops that from being rediscovered
  * by a failing test in prompts 15 and 16.
  */
-export function registerLinkRoutes(app: OpenAPIHono<AppEnv>): void {
+export interface LinkRoutesOptions {
+  /** Clock for `updated_at`. Injected in tests. */
+  now?: () => number;
+}
+
+export function registerLinkRoutes(
+  app: OpenAPIHono<AppEnv>,
+  options: LinkRoutesOptions = {},
+): void {
   registerCreateLinkRoute(app);
   registerListLinksRoute(app);
   registerGetLinkRoute(app);
+  registerPatchLinkRoute(app, options.now ?? (() => Date.now()));
 
   methodNotAllowed(app, "/v1/links");
   methodNotAllowed(app, "/v1/links/:slug");

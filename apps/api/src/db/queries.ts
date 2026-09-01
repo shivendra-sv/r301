@@ -84,6 +84,74 @@ export async function attachTag(db: D1Database, linkId: number, tagId: number): 
     .run();
 }
 
+export interface UpdateLinkFields {
+  destination?: string;
+  redirectType?: number;
+  /** null clears the expiry (D26.5). */
+  expiresAt?: number | null;
+  isActive?: number;
+  /** null clears the correlation id (D26.5). */
+  externalId?: string | null;
+}
+
+/**
+ * Sets only the columns the caller named, always bumping `updated_at` — a PATCH
+ * that changes nothing but tags is still a write.
+ *
+ * `deleted_at IS NULL` guards the window between the route's lookup and this
+ * write: a link tombstoned in between must not be resurrected by an update. The
+ * row then does not match, `RETURNING` yields nothing, and the caller renders
+ * the same 404 the lookup would have.
+ */
+export function updateLink(
+  db: D1Database,
+  id: number,
+  fields: UpdateLinkFields,
+  at: number,
+): Promise<LinkRow | null> {
+  const bindings: (string | number | null)[] = [];
+  const placeholder = (value: string | number | null): string => `?${bindings.push(value)}`;
+  const set = [`updated_at = ${placeholder(at)}`];
+
+  if (fields.destination !== undefined) {
+    set.push(`destination = ${placeholder(fields.destination)}`);
+  }
+
+  if (fields.redirectType !== undefined) {
+    set.push(`redirect_type = ${placeholder(fields.redirectType)}`);
+  }
+
+  if (fields.expiresAt !== undefined) {
+    set.push(`expires_at = ${placeholder(fields.expiresAt)}`);
+  }
+
+  if (fields.isActive !== undefined) {
+    set.push(`is_active = ${placeholder(fields.isActive)}`);
+  }
+
+  if (fields.externalId !== undefined) {
+    set.push(`external_id = ${placeholder(fields.externalId)}`);
+  }
+
+  return db
+    .prepare(
+      `UPDATE links SET ${set.join(", ")}
+        WHERE id = ${placeholder(id)} AND deleted_at IS NULL
+        RETURNING *`,
+    )
+    .bind(...bindings)
+    .first<LinkRow>();
+}
+
+/**
+ * Clears a link's tag set so the caller can re-attach it (D26.5: `tags`
+ * replaces rather than merges). The `tags` rows themselves are left alone —
+ * v1 does not prune orphans, and the next link to use the name reuses the row.
+ */
+export async function detachAllTags(db: D1Database, linkId: number): Promise<void> {
+  await db.prepare("DELETE FROM link_tags WHERE link_id = ?1").bind(linkId).run();
+}
+
 /**
  * The read path's counterpart to `findLinkBySlug`: tombstones are filtered out
  * here, so a caller cannot accidentally serve one (D15 — a tombstoned link is
