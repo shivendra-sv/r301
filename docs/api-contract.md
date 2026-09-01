@@ -1,5 +1,9 @@
 # r301.dev — API Contract
 
+> **Status: commentary as of 1 Sep 2026 (prompt 19).** The condition below is now met — `GET /v1/openapi.json` serves an OpenAPI 3.1 document
+> generated from the Zod schemas, so **code is canonical** and this file is background reading. Where the two differ, the document wins and the
+> difference is a bug in one of them; `apps/api/test/routes/openapi.test.ts` is what keeps them honest.
+
 Canonical endpoint-by-endpoint spec, derived from PRD §7–§8. This file is the contract **until** the Zod schemas + generated OpenAPI exist in code; after that, code is canonical and this file becomes commentary. Contract elaborations beyond the PRD's literal text are recorded as ADR D26 in `docs/decisions.md`.
 
 ## Global conventions (PRD §8)

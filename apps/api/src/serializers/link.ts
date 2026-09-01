@@ -2,20 +2,16 @@
 // endpoint that returns a link renders it through here, so the wire shape has
 // exactly one definition.
 
+import type { z } from "@hono/zod-openapi";
 import type { LinkRow } from "../db/types";
+import type { linkResourceSchema } from "../schemas/resources";
 
-export interface LinkResource {
-  slug: string;
-  short_url: string;
-  destination: string;
-  redirect_type: number;
-  is_active: boolean;
-  expires_at: string | null;
-  tags: string[];
-  external_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
+/**
+ * Derived from the schema the OpenAPI document publishes, so the wire shape has
+ * exactly one definition — a documented field this stops sending is a type
+ * error, not a lie in the published contract.
+ */
+export type LinkResource = z.infer<typeof linkResourceSchema>;
 
 /** ENVIRONMENT (wrangler.toml) → the host short links are served from. */
 const REDIRECT_BASE_URLS: Record<string, string> = {
@@ -60,7 +56,9 @@ export function serializeLink(
     slug: row.slug,
     short_url: `${redirectBaseUrl(environment)}/${row.slug}`,
     destination: row.destination,
-    redirect_type: row.redirect_type,
+    // The 0001_init CHECK constraint restricts this column to the four values
+    // the contract names; TypeScript cannot see a SQL constraint.
+    redirect_type: row.redirect_type as LinkResource["redirect_type"],
     is_active: row.is_active === 1,
     expires_at: isoOrNull(row.expires_at),
     tags: [...tags],

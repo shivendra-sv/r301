@@ -15,6 +15,14 @@ import type { AppEnv } from "../types";
 const IDEMPOTENT_METHODS = new Set(["POST"]);
 
 /**
+ * The paths this middleware is mounted on (D18, api-contract §Global
+ * conventions). Exported so `routes/api.ts` mounts exactly these and the
+ * OpenAPI document documents 409 on exactly these — three places that would
+ * otherwise be three hand-maintained lists free to disagree.
+ */
+export const IDEMPOTENT_PATHS = ["/v1/links", "/v1/links/batch"] as const;
+
+/**
  * Runs the purge off the response path when there is an execution context, and
  * inline otherwise so it still happens under `app.request()` in tests. Failures
  * are swallowed: housekeeping must never cost a caller their response.

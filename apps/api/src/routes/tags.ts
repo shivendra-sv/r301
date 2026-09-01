@@ -1,5 +1,7 @@
 import { createRoute, type OpenAPIHono } from "@hono/zod-openapi";
 import { listTagCounts } from "../db/queries";
+import { AUTHENTICATED_ROUTE_ERRORS } from "../schemas/error-envelope";
+import { jsonResponse, tagListSchema } from "../schemas/resources";
 import type { AppEnv } from "../types";
 
 export const listTagsRoute = createRoute({
@@ -9,8 +11,8 @@ export const listTagsRoute = createRoute({
   responses: {
     // Unpaginated in v1 (D26.6): pilot tag cardinality is tiny. If it ever
     // approaches ~1,000 this needs a cursor, and that is a contract change.
-    200: { description: "Every tag, sorted by name, with its live link count." },
-    401: { description: "Missing or invalid API key." },
+    200: jsonResponse("Every tag, sorted by name, with its live link count.", tagListSchema),
+    ...AUTHENTICATED_ROUTE_ERRORS,
   },
 });
 

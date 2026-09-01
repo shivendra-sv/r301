@@ -1,13 +1,14 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createAuthMiddleware } from "../middleware/auth";
 import { createErrorHandler, methodNotAllowed, notFoundHandler } from "../middleware/errors";
-import { createIdempotencyMiddleware } from "../middleware/idempotency";
+import { createIdempotencyMiddleware, IDEMPOTENT_PATHS } from "../middleware/idempotency";
 import { jsonBody } from "../middleware/json-body";
 import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
 import { registerHealthRoute } from "./health";
 import { registerLinkRoutes } from "./links";
 import { registerTagStatsRoute } from "./stats";
+import { registerOpenApiRoute } from "./openapi";
 import { registerTagsRoute } from "./tags";
 import { apiErrorFromZod } from "../schemas/fields";
 import { reportError } from "../telemetry/sentry";
@@ -54,8 +55,9 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
     options.now === undefined ? {} : { now: options.now },
   );
 
-  app.use("/v1/links", idempotency);
-  app.use("/v1/links/batch", idempotency);
+  for (const path of IDEMPOTENT_PATHS) {
+    app.use(path, idempotency);
+  }
   registerLinkRoutes(app, options.now === undefined ? {} : { now: options.now });
 
   registerTagStatsRoute(app);
@@ -63,6 +65,11 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
 
   registerTagsRoute(app);
   methodNotAllowed(app, "/v1/tags");
+
+  // Last, so every route above is already in the registry when the document is
+  // generated. Unauthenticated (design §4) — the auth middleware exempts this
+  // path, and no `security` is attached to the operation.
+  registerOpenApiRoute(app);
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);

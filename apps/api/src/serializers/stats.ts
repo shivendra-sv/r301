@@ -1,16 +1,13 @@
 // The stats resources (api-contract §stats, §tags). Counts live here rather
 // than on the Link resource — D26.1 keeps one source of truth for them.
 
+import type { z } from "@hono/zod-openapi";
 import type { LinkRow } from "../db/types";
+import type { linkStatsSchema } from "../schemas/resources";
 import { isoOrNull } from "./link";
 
-export interface LinkStatsResource {
-  slug: string;
-  /** Lifetime total. At-least-approximate by design (PRD §7.4, D21). */
-  click_count: number;
-  last_clicked_at: string | null;
-  created_at: string;
-}
+/** Derived from the published schema — see `serializers/link.ts` for why. */
+export type LinkStatsResource = z.infer<typeof linkStatsSchema>;
 
 export function serializeLinkStats(row: LinkRow): LinkStatsResource {
   return {

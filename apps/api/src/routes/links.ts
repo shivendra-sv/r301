@@ -13,8 +13,14 @@ import { ApiError } from "../errors";
 import { putRedirect, redirectEntryFor, removeRedirect } from "../kv/redirects-cache";
 import { methodNotAllowed } from "../middleware/errors";
 import { createLinkSchema } from "../schemas/create-link";
+import {
+  AUTHENTICATED_ROUTE_ERRORS,
+  errorResponse,
+  JSON_BODY_ERRORS,
+} from "../schemas/error-envelope";
 import { listLinksQuerySchema } from "../schemas/list-query";
 import { patchLinkSchema } from "../schemas/patch-link";
+import { jsonResponse, linkListSchema, linkResourceSchema } from "../schemas/resources";
 import { serializeLink } from "../serializers/link";
 import { decodeCursor, encodeCursor } from "../services/cursor";
 import { createLink } from "../services/links";
@@ -38,11 +44,15 @@ export const createLinkRoute = createRoute({
     },
   },
   responses: {
-    201: { description: "The created link." },
-    400: { description: "Malformed body, unknown field or bad value." },
-    401: { description: "Missing or invalid API key." },
-    409: { description: "The slug is already in use, including by a tombstone." },
-    422: { description: "The destination failed validation, or the slug is reserved." },
+    201: jsonResponse("The created link.", linkResourceSchema),
+    400: errorResponse("Malformed body, unknown field or bad value."),
+    ...AUTHENTICATED_ROUTE_ERRORS,
+    ...JSON_BODY_ERRORS,
+    409: errorResponse(
+      "The slug is already in use (including by a tombstone), or the "
+      + "Idempotency-Key was reused with a different payload.",
+    ),
+    422: errorResponse("The destination failed validation, or the slug is reserved."),
   },
 });
 
@@ -60,9 +70,9 @@ export const getLinkRoute = createRoute({
   summary: "Fetch one link",
   request: { params: slugParamSchema },
   responses: {
-    200: { description: "The link." },
-    401: { description: "Missing or invalid API key." },
-    404: { description: "No such link, or it has been deleted." },
+    200: jsonResponse("The link.", linkResourceSchema),
+    ...AUTHENTICATED_ROUTE_ERRORS,
+    404: errorResponse("No such link, or it has been deleted."),
   },
 });
 
@@ -114,9 +124,9 @@ export const listLinksRoute = createRoute({
   summary: "List links",
   request: { query: listLinksQuerySchema },
   responses: {
-    200: { description: "A page of links, newest first, with the next cursor." },
-    400: { description: "Unknown filter, bad value or an unreadable cursor." },
-    401: { description: "Missing or invalid API key." },
+    200: jsonResponse("A page of links, newest first, with the next cursor.", linkListSchema),
+    400: errorResponse("Unknown filter, bad value or an unreadable cursor."),
+    ...AUTHENTICATED_ROUTE_ERRORS,
   },
 });
 
@@ -180,11 +190,12 @@ export const patchLinkRoute = createRoute({
     },
   },
   responses: {
-    200: { description: "The updated link." },
-    400: { description: "Empty body, unknown field (including `slug`) or bad value." },
-    401: { description: "Missing or invalid API key." },
-    404: { description: "No such link, or it has been deleted." },
-    422: { description: "The new destination failed validation." },
+    200: jsonResponse("The updated link.", linkResourceSchema),
+    400: errorResponse("Empty body, unknown field (including `slug`) or bad value."),
+    ...AUTHENTICATED_ROUTE_ERRORS,
+    ...JSON_BODY_ERRORS,
+    404: errorResponse("No such link, or it has been deleted."),
+    422: errorResponse("The new destination failed validation."),
   },
 });
 
@@ -266,8 +277,8 @@ export const deleteLinkRoute = createRoute({
   request: { params: slugParamSchema },
   responses: {
     204: { description: "Tombstoned. No body." },
-    401: { description: "Missing or invalid API key." },
-    404: { description: "No such link, or it was already deleted." },
+    ...AUTHENTICATED_ROUTE_ERRORS,
+    404: errorResponse("No such link, or it was already deleted."),
   },
 });
 

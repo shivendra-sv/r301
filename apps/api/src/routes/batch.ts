@@ -2,7 +2,13 @@ import { createRoute, type OpenAPIHono } from "@hono/zod-openapi";
 import { ApiError } from "../errors";
 import { batchCreateSchema } from "../schemas/batch-create";
 import { createLinkSchema } from "../schemas/create-link";
+import {
+  AUTHENTICATED_ROUTE_ERRORS,
+  errorResponse,
+  JSON_BODY_ERRORS,
+} from "../schemas/error-envelope";
 import { apiErrorFromZod } from "../schemas/fields";
+import { batchResultSchema, jsonResponse } from "../schemas/resources";
 import type { LinkResource } from "../serializers/link";
 import { createLink } from "../services/links";
 import type { AppEnv } from "../types";
@@ -20,9 +26,16 @@ export const batchCreateRoute = createRoute({
   responses: {
     // 200 always (D22): per-item results carry the outcomes, so no single item
     // can fail the batch. The only 400 is a fault of the request as a whole.
-    200: { description: "Per-item results in request order, plus a summary." },
-    400: { description: "`links` missing, not an array, empty, or over 100 items." },
-    401: { description: "Missing or invalid API key." },
+    200: jsonResponse("Per-item results in request order, plus a summary.", batchResultSchema),
+    400: errorResponse("`links` missing, not an array, empty, or over 100 items."),
+    // D18: one key covers the whole batch, so a reused key with a different
+    // payload fails the request as a whole — the only 4xx a batch can answer
+    // besides a malformed wrapper.
+    409: errorResponse(
+      "The Idempotency-Key was reused with a different payload, or its original is still in flight.",
+    ),
+    ...AUTHENTICATED_ROUTE_ERRORS,
+    ...JSON_BODY_ERRORS,
   },
 });
 

@@ -1,6 +1,8 @@
 import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
 import { aggregateTagStats, findLiveLinkBySlug } from "../db/queries";
 import { ApiError } from "../errors";
+import { AUTHENTICATED_ROUTE_ERRORS, errorResponse } from "../schemas/error-envelope";
+import { jsonResponse, linkStatsSchema, tagStatsSchema } from "../schemas/resources";
 import { tagStatsQuerySchema } from "../schemas/stats-query";
 import { serializeLinkStats } from "../serializers/stats";
 import type { AppEnv } from "../types";
@@ -17,9 +19,9 @@ export const linkStatsRoute = createRoute({
   summary: "Counts for one link",
   request: { params: slugParamSchema },
   responses: {
-    200: { description: "Click count, last click and creation time." },
-    401: { description: "Missing or invalid API key." },
-    404: { description: "No such link, or it has been deleted." },
+    200: jsonResponse("Click count, last click and creation time.", linkStatsSchema),
+    ...AUTHENTICATED_ROUTE_ERRORS,
+    404: errorResponse("No such link, or it has been deleted."),
   },
 });
 
@@ -45,9 +47,9 @@ export const tagStatsRoute = createRoute({
   summary: "Aggregate counts for one tag",
   request: { query: tagStatsQuerySchema },
   responses: {
-    200: { description: "Link and click totals across the tag's live links." },
-    400: { description: "`tag` missing, empty or an unknown parameter present." },
-    401: { description: "Missing or invalid API key." },
+    200: jsonResponse("Link and click totals across the tag's live links.", tagStatsSchema),
+    400: errorResponse("`tag` missing, empty or an unknown parameter present."),
+    ...AUTHENTICATED_ROUTE_ERRORS,
   },
 });
 
