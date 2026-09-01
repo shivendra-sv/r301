@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { z } from "@hono/zod-openapi";
+import { batchCreateSchema } from "../../src/schemas/batch-create";
 import { createLinkSchema } from "../../src/schemas/create-link";
 import { listLinksQuerySchema } from "../../src/schemas/list-query";
 import { patchLinkSchema } from "../../src/schemas/patch-link";
 
 const SCHEMAS = {
   createLinkSchema,
+  batchCreateSchema,
   patchLinkSchema,
   listLinksQuerySchema,
 } as const;
@@ -52,5 +54,39 @@ describe("OpenAPI convertibility (D22, prompt 19)", () => {
   // their input side, so this costs nothing — but it is not free to change.
   it("cannot render the list query's output side, by construction", () => {
     expect(() => z.toJSONSchema(listLinksQuerySchema, { io: "output" })).toThrow(/[Tt]ransform/);
+  });
+
+  // Batch items are `unknown` so one bad item can be one error rather than a
+  // 400 for the whole request (§7.2) — the document must still describe them
+  // as objects, or the published contract would advertise "anything goes".
+  it("documents batch items as the create body, despite validating per item", () => {
+    const json = z.toJSONSchema(batchCreateSchema, { io: "input" }) as {
+      properties: Record<
+        string,
+        {
+          type?: string;
+          minItems?: number;
+          maxItems?: number;
+          items?: { type?: string; required?: string[]; properties?: Record<string, unknown> };
+        }
+      >;
+    };
+    const links = json.properties["links"];
+
+    expect(links?.type).toBe("array");
+    expect(links?.minItems).toBe(1);
+    expect(links?.maxItems).toBe(100);
+    // The item is the create body itself — not a bare `object`, and not the
+    // permissive `unknown` the wrapper actually parses with.
+    expect(links?.items?.type).toBe("object");
+    expect(links?.items?.required).toEqual(["destination"]);
+    expect(Object.keys(links?.items?.properties ?? {}).sort()).toEqual([
+      "destination",
+      "expires_at",
+      "external_id",
+      "redirect_type",
+      "slug",
+      "tags",
+    ]);
   });
 });

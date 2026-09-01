@@ -4,7 +4,6 @@ import {
   detachAllTags,
   findLiveLinkBySlug,
   findTagNamesForLinks,
-  insertLink,
   listLinks,
   tombstoneLinkBySlug,
   updateLink,
@@ -18,8 +17,9 @@ import { listLinksQuerySchema } from "../schemas/list-query";
 import { patchLinkSchema } from "../schemas/patch-link";
 import { serializeLink } from "../serializers/link";
 import { decodeCursor, encodeCursor } from "../services/cursor";
-import { resolveSlug } from "../services/slugs";
+import { createLink } from "../services/links";
 import type { AppEnv } from "../types";
+import { registerBatchCreateRoute } from "./batch";
 
 /**
  * Declared with `createRoute` so the OpenAPI document accrues as routes land
@@ -44,11 +44,6 @@ export const createLinkRoute = createRoute({
     422: { description: "The destination failed validation, or the slug is reserved." },
   },
 });
-
-/** SQLite's wording, surfaced verbatim through D1. */
-function isSlugUniqueViolation(err: unknown): boolean {
-  return err instanceof Error && /UNIQUE constraint failed: links\.slug/.test(err.message);
-}
 
 /**
  * The path param carries no format schema on purpose: api-contract §GET one
@@ -95,60 +90,20 @@ function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): v
       throw new ApiError("unauthorized", "A valid API key is required.");
     }
 
-    const resolved = await resolveSlug({
+    // The whole sequence lives in services/links.ts so batch (§7.2) creates
+    // links by the same steps rather than a parallel copy of them. Every
+    // failure it raises is already the contract's, so it travels untouched to
+    // the error handler — batch is the caller that catches instead.
+    const link = await createLink({
       db: c.env.DB,
-      ...(body.slug === undefined ? {} : { custom: body.slug }),
-    });
-
-    if (!resolved.ok) {
-      throw new ApiError(resolved.code, resolved.message, "slug");
-    }
-
-    // resolveSlug only SELECTs; it never reserves. A concurrent request can
-    // take the slug in between, so UNIQUE(slug) is the real arbiter (design §6)
-    // and the loser gets the contract's 409 rather than an unexplained 500.
-    const row = await insertLink(c.env.DB, {
-      slug: resolved.slug,
-      destination: body.destination,
-      redirectType: body.redirect_type,
-      expiresAt: body.expires_at === undefined ? null : Date.parse(body.expires_at),
-      externalId: body.external_id ?? null,
+      kv: c.env.REDIRECTS,
+      body,
       createdByKeyId: key.id,
       at: now(),
-    }).catch((err: unknown) => {
-      if (isSlugUniqueViolation(err)) {
-        throw new ApiError("slug_taken", `Slug '${resolved.slug}' is already in use.`, "slug");
-      }
-
-      throw err;
+      environment: c.env.ENVIRONMENT,
     });
 
-    if (row === null) {
-      throw new Error("INSERT ... RETURNING produced no row");
-    }
-
-    // §7.3: implicit creation. Sequential rather than batched because each tag
-    // needs its id back before it can be linked.
-    for (const name of body.tags ?? []) {
-      const tag = await upsertTag(c.env.DB, name);
-      if (tag === null) {
-        throw new Error(`tag upsert produced no row for '${name}'`);
-      }
-      await attachTag(c.env.DB, row.id, tag.id);
-    }
-
-    // Read back rather than echoing `body.tags`, exactly as PATCH does:
-    // `link_tags` is keyed (link_id, tag_id), so `["x","x"]` stores one row and
-    // an echo would report a set the next GET disagrees with (question 23).
-    const tags = (await findTagNamesForLinks(c.env.DB, [row.id])).get(row.id) ?? [];
-
-    // D20: D1 has committed; the KV put is awaited, so its failure is the
-    // request's failure. The row stays behind on purpose — an idempotent
-    // retry converges (prompt 11), and a fire-and-forget put would instead
-    // leave a stale entry that backfill can never heal.
-    await putRedirect(c.env.REDIRECTS, row.slug, redirectEntryFor(row));
-
-    return c.json(serializeLink(row, tags, c.env.ENVIRONMENT), 201);
+    return c.json(link, 201);
   });
 }
 
@@ -335,12 +290,19 @@ function registerDeleteLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): v
 }
 
 /**
- * Every `/v1/links…` handler, in the one order that works: `methodNotAllowed`
- * registers `app.all(path)`, and Hono matches in registration order, so both
- * 405 guards must come **after** every method handler for their path — a GET
- * declared after the guard would answer 405 instead of listing. Keeping the
- * whole path family in one function is what stops that from being rediscovered
- * by a failing test in prompts 15 and 16.
+ * Every `/v1/links…` handler, in the one order that works, on two counts:
+ *
+ * 1. `methodNotAllowed` registers `app.all(path)`, and Hono matches in
+ *    registration order, so each 405 guard must come **after** every method
+ *    handler for its path — a GET declared after the guard would answer 405
+ *    instead of listing.
+ * 2. `/v1/links/batch` is a literal segment that `/v1/links/:slug` also
+ *    matches, so batch must be registered **before** the `:slug` family.
+ *    Registered after it, `POST /v1/links/batch` answers 405 (swallowed by the
+ *    `:slug` 405 guard) rather than creating anything.
+ *
+ * Keeping the whole path family in one function is what stops either from
+ * being rediscovered by a failing test in a later prompt.
  */
 export interface LinkRoutesOptions {
   /** Clock for `created_at`/`updated_at`, shared by every route here. Injected in tests. */
@@ -355,6 +317,11 @@ export function registerLinkRoutes(
 
   registerCreateLinkRoute(app, now);
   registerListLinksRoute(app);
+
+  // Before the `:slug` family and its 405 guard — see (2) above.
+  registerBatchCreateRoute(app, now);
+  methodNotAllowed(app, "/v1/links/batch");
+
   registerGetLinkRoute(app);
   registerPatchLinkRoute(app, now);
   registerDeleteLinkRoute(app, now);

@@ -45,12 +45,15 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
 
   registerHealthRoute(app);
 
-  // Registered before the route it guards, so it wraps that handler (D18).
-  // Prompt 17 adds `/v1/links/batch` to the same list.
-  app.use(
-    "/v1/links",
-    createIdempotencyMiddleware(options.now === undefined ? {} : { now: options.now }),
+  // Registered before the routes it guards, so it wraps those handlers (D18).
+  // One key covers a whole batch (§7.2): the middleware stores the 200 and its
+  // per-item results, so a replay returns those results verbatim.
+  const idempotency = createIdempotencyMiddleware(
+    options.now === undefined ? {} : { now: options.now },
   );
+
+  app.use("/v1/links", idempotency);
+  app.use("/v1/links/batch", idempotency);
   registerLinkRoutes(app, options.now === undefined ? {} : { now: options.now });
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
