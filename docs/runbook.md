@@ -80,17 +80,18 @@ pnpm dlx wrangler@latest d1 time-travel info r301-production --timestamp=$(date 
 
 Both checks must assert something **only our Worker can produce**. Before the first deploy, `api-staging.r301.dev` returns `522` (proxied DNS, no origin) — but the redirect host does **not** fail as obviously, which is the trap below.
 
-- [ ] API host is live and is the *staging* build:
+- [x] API host is live and is the *staging* build:
 ```bash
 curl -s https://api-staging.r301.dev/v1/health | jq -e '.status == "ok" and .env == "staging"'
 ```
-- [ ] Redirect host is served by our Worker:
+- [x] Redirect host is served by our Worker:
 ```bash
 # X-Request-Id is stamped on every response by our request-id middleware.
 curl -sS -D - -o /dev/null https://staging.r301.dev/robots.txt | grep -i '^x-request-id:'
 # And our robots.txt disallows crawling; Cloudflare's does not.
 curl -sS https://staging.r301.dev/robots.txt | grep -q 'Disallow: /' && echo "worker robots.txt OK"
 ```
+  - Both verified passing 1 Sep 2026 against the first real staging deploy (`d97c357`): health reported `{"status":"ok","env":"staging"}` with `version` equal to the deployed SHA, and the redirect host returned our `X-Request-Id` and our `Disallow: /`.
   - ⚠️ **Do not use a bare `curl -I …/robots.txt` as the check.** Verified 1 Sep 2026 with nothing deployed: it returns **200** — Cloudflare serves its own content-signals `robots.txt` at the zone edge, so the original check passed while the Worker did not exist. The two assertions above are what distinguish them.
 
 ## Phase C — after the mint-key script exists (prompt-numbered in PROGRESS.md)
