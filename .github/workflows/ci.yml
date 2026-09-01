@@ -22,3 +22,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      # docs/openapi.json is generated from the Zod schemas, never hand-edited:
+      # this fails the PR if the committed file no longer matches the code.
+      - run: pnpm openapi:check

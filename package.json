@@ -6,6 +6,8 @@
   },
   "scripts": {
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "openapi": "pnpm --filter @r301/api openapi",
+    "openapi:check": "pnpm --filter @r301/api openapi:check"
   }
 }

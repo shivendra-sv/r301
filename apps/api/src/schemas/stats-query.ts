@@ -10,7 +10,14 @@ import { MAX_TAG_LENGTH } from "./fields";
  */
 export const tagStatsQuerySchema = z
   .object({
-    tag: z.string().min(1).max(MAX_TAG_LENGTH),
+    tag: z.string().min(1).max(MAX_TAG_LENGTH).meta({
+      description:
+        "The tag to aggregate over, matched exactly. Required — there is no all-tags aggregate, "
+        + "and defaulting to one would answer a question nobody asked. A tag that does not "
+        + "exist reports zeros with a `200`, so this endpoint cannot be used to discover which "
+        + "tags exist; use `GET /v1/tags` for that.",
+      example: "tenant:42",
+    }),
   })
   .strict();
 

@@ -38,8 +38,35 @@ export const batchCreateSchema = z
     links: z
       .array(z.unknown().meta(createBodyJsonSchema()))
       .min(1, "links must contain at least one item.")
-      .max(MAX_BATCH_ITEMS, `links must contain at most ${MAX_BATCH_ITEMS} items.`),
+      .max(MAX_BATCH_ITEMS, `links must contain at most ${MAX_BATCH_ITEMS} items.`)
+      .meta({
+        description:
+          `Between 1 and ${MAX_BATCH_ITEMS} create bodies, each identical in shape to `
+          + "`POST /v1/links`. Processed sequentially, in order, and **not** transactionally: "
+          + "each item succeeds or fails on its own.",
+      }),
   })
-  .strict();
+  .strict()
+  .meta({
+    title: "Create links in bulk",
+    description:
+      `Up to ${MAX_BATCH_ITEMS} links in one request. Only whole-request faults — \`links\` `
+      + "missing, not an array, empty, or over the cap — are rejected with a `400`; anything "
+      + "wrong with an individual item becomes an `error` entry in the `200` response.",
+    example: {
+      links: [
+        {
+          destination: "https://clinic.example.com/appt/9182?t=abc123",
+          tags: ["tenant:42", "kind:appointment"],
+          external_id: "appt_9182",
+        },
+        {
+          destination: "https://clinic.example.com/appt/9183?t=def456",
+          slug: "launch",
+          tags: ["tenant:42", "kind:appointment"],
+        },
+      ],
+    },
+  });
 
 export type BatchCreateInput = z.infer<typeof batchCreateSchema>;

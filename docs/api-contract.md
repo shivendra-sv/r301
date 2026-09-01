@@ -3,6 +3,12 @@
 > **Status: commentary as of 1 Sep 2026 (prompt 19).** The condition below is now met — `GET /v1/openapi.json` serves an OpenAPI 3.1 document
 > generated from the Zod schemas, so **code is canonical** and this file is background reading. Where the two differ, the document wins and the
 > difference is a bug in one of them; `apps/api/test/routes/openapi.test.ts` is what keeps them honest.
+>
+> **The document as a file: [`docs/openapi.json`](openapi.json)** (2 Sep 2026). Generated, never hand-edited — run `pnpm openapi` to refresh it, and
+> CI runs `pnpm openapi:check` so a PR that changes a schema without regenerating fails. It is byte-identical to what the Worker serves except
+> `info.version`, which is the deploy's git SHA there and the stable string `v1` in the artifact. Field descriptions, worked examples, `operationId`s,
+> tag groupings and the `Idempotency-Key` / `X-Request-Id` / `Idempotency-Replayed` header contracts live on the Zod schemas that produce it;
+> `apps/api/test/routes/openapi-richness.test.ts` is what stops any of that rotting.
 
 Canonical endpoint-by-endpoint spec, derived from PRD §7–§8. This file is the contract **until** the Zod schemas + generated OpenAPI exist in code; after that, code is canonical and this file becomes commentary. Contract elaborations beyond the PRD's literal text are recorded as ADR D26 in `docs/decisions.md`.
 

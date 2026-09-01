@@ -8,7 +8,8 @@ import {
   JSON_BODY_ERRORS,
 } from "../schemas/error-envelope";
 import { apiErrorFromZod } from "../schemas/fields";
-import { batchResultSchema, jsonResponse } from "../schemas/resources";
+import { idempotencyKeyHeaderSchema, IDEMPOTENT_RESPONSE_HEADERS } from "../schemas/headers";
+import { batchResultSchema, jsonResponse, LINK_EXAMPLE } from "../schemas/resources";
 import type { LinkResource } from "../serializers/link";
 import { createLink } from "../services/links";
 import type { AppEnv } from "../types";
@@ -16,23 +17,68 @@ import type { AppEnv } from "../types";
 export const batchCreateRoute = createRoute({
   method: "post",
   path: "/v1/links/batch",
+  operationId: "createLinksBatch",
+  tags: ["Links"],
   summary: "Create up to 100 short links",
+  description:
+    "Creates many links in one round trip — the endpoint to use when a job produces a batch of "
+    + "messages rather than one.\n\n"
+    + "**Always answers `200`, even if every item failed.** The HTTP status describes the "
+    + "request; the items describe the work. Read `summary.failed` and the per-item `status` "
+    + "rather than branching on the status code. Only a fault in the request as a whole — "
+    + "`links` missing, not an array, empty, or over 100 items — is a `400`, and it is rejected "
+    + "before any item is created.\n\n"
+    + "Items are processed sequentially and are **not** transactional: earlier successes stand "
+    + "even if later items fail, and there is no rollback. Retry just the failed indices, with a "
+    + "fresh `Idempotency-Key` — one key covers a whole batch, so reusing it replays the "
+    + "original mixed result instead of retrying anything.\n\n"
+    + "Expect this to take longer than a single create; it is budgeted at under two seconds for "
+    + "a full 100 items.",
   request: {
+    headers: idempotencyKeyHeaderSchema,
     body: {
       required: true,
+      description: "The links to create, 1–100 of them.",
       content: { "application/json": { schema: batchCreateSchema } },
     },
   },
   responses: {
     // 200 always (D22): per-item results carry the outcomes, so no single item
     // can fail the batch. The only 400 is a fault of the request as a whole.
-    200: jsonResponse("Per-item results in request order, plus a summary.", batchResultSchema),
-    400: errorResponse("`links` missing, not an array, empty, or over 100 items."),
+    200: jsonResponse(
+      "Per-item results in request order, plus a summary. Returned even when every item failed.",
+      batchResultSchema,
+      {
+        items: [
+          { index: 0, status: "created", link: LINK_EXAMPLE },
+          {
+            index: 1,
+            status: "error",
+            error: {
+              code: "slug_taken",
+              message: "Slug 'launch' is already in use.",
+              field: "slug",
+            },
+          },
+        ],
+        summary: { created: 1, failed: 1 },
+      },
+      IDEMPOTENT_RESPONSE_HEADERS,
+    ),
+    400: errorResponse("`links` missing, not an array, empty, or over 100 items.", {
+      code: "invalid_request",
+      message: "links must contain at most 100 items.",
+      field: "links",
+    }),
     // D18: one key covers the whole batch, so a reused key with a different
     // payload fails the request as a whole — the only 4xx a batch can answer
     // besides a malformed wrapper.
     409: errorResponse(
       "The Idempotency-Key was reused with a different payload, or its original is still in flight.",
+      {
+        code: "idempotency_conflict",
+        message: "This Idempotency-Key was already used with a different payload.",
+      },
     ),
     ...AUTHENTICATED_ROUTE_ERRORS,
     ...JSON_BODY_ERRORS,

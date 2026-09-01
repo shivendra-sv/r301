@@ -10,7 +10,17 @@
     // does NOT stop `src/**` from importing `node:*`: the `types` array governs
     // global inclusion, not module resolution, and those imports still resolve
     // once @types/node is in node_modules. See PROGRESS.md open question 12.
-    "types": ["node"]
+    //
+    // `@cloudflare/workers-types` is listed alongside it because a script may
+    // import Worker code that is *typed* against workerd — `dump-openapi.ts`
+    // imports the whole router to render its OpenAPI document. Those types are
+    // erased at runtime and the script never calls into them; it builds a stub
+    // binding for a route that touches neither D1 nor KV. The cost is that this
+    // pass no longer rejects a script that *uses* a workerd global by mistake,
+    // which would then fail under Node at runtime. Both entries are deliberate:
+    // this config describes tsx-in-Node importing Worker code, which genuinely
+    // sees both worlds.
+    "types": ["node", "@cloudflare/workers-types"]
   },
   "include": ["scripts/**/*.ts"]
 }

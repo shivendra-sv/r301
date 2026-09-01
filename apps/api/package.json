@@ -8,6 +8,8 @@
     "test:watch": "vitest",
     "check:no-node-imports": "if grep -rEn '(from|import|require)[[:space:]]*\\(?[[:space:]]*\"node:' src/; then echo \"D28: src/ must not import node:* (PROGRESS question 12)\"; exit 1; fi",
     "typecheck": "pnpm run check:no-node-imports && tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
+    "openapi": "tsx scripts/dump-openapi.ts",
+    "openapi:check": "tsx scripts/dump-openapi.ts --check",
     "smoke": "tsx scripts/smoke.ts",
     "mint-key": "tsx scripts/mint-key.ts",
     "revoke-key": "tsx scripts/revoke-key.ts"

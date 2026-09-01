@@ -17,7 +17,15 @@ export const patchLinkSchema = z
     destination: destinationSchema.optional(),
     redirect_type: redirectTypeSchema.optional(),
     expires_at: expiresAtSchema.nullable().optional(),
-    is_active: z.boolean().optional(),
+    is_active: z.boolean().optional().meta({
+      description:
+        "Whether the link redirects. Setting this to `false` is the immediate kill switch: the "
+        + "short URL starts answering `404` — the same as an unknown link — while the link "
+        + "itself, its tags and its counts are all preserved. Set it back to `true` to restore "
+        + "it. Deactivation outranks expiry, so an inactive link answers `404` even after its "
+        + "`expires_at` has passed.",
+      example: false,
+    }),
     tags: tagsSchema.optional(),
     external_id: externalIdSchema.nullable().optional(),
   })
@@ -33,6 +41,22 @@ export const patchLinkSchema = z
         input: ctx.value,
       });
     }
+  })
+  .meta({
+    title: "Update link",
+    description:
+      "Any non-empty subset of the mutable fields. Omitted fields are left alone; an empty "
+      + "object is a `400` rather than a successful no-op.\n\n"
+      + "Two fields accept `null` to *clear* them — `expires_at` and `external_id`. `tags` "
+      + "**replaces** the whole set rather than merging, so send the full list you want (or `[]` "
+      + "to remove them all).\n\n"
+      + "`slug` is immutable and is rejected as an unknown field. A change reaches the redirect "
+      + "edge worldwide within about 60 seconds — the response is immediate, propagation is not.",
+    examples: [
+      { destination: "https://clinic.example.com/appt/9182/rescheduled" },
+      { is_active: false },
+      { expires_at: null, tags: ["tenant:42", "kind:archived"] },
+    ],
   });
 
 export type PatchLinkInput = z.infer<typeof patchLinkSchema>;

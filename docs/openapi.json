@@ -1,0 +1,3067 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "r301.dev API",
+    "version": "v1",
+    "summary": "An API-first URL shortener with a globally distributed redirect edge.",
+    "description": "r301.dev turns long URLs into short ones and serves the redirects from the edge. There is no dashboard: this API is the product.\n\n## Two hosts\n\nThis document describes the **management API** at `api.r301.dev`. Redirects are served from a separate host — `https://r301.dev/{slug}` — which takes no API key and is not described here. A short link is live at its `short_url` the moment a create call returns.\n\n## Authentication\n\nSend an API key as `Authorization: Bearer r301_live_…` on every `/v1` route except `GET /v1/health` and `GET /v1/openapi.json`. Keys are issued out of band; there are no key-management endpoints in v1. Revocation is immediate.\n\nKeys are account-wide: every live key can read and modify every link on the account. Treat them as server-side secrets — there is no CORS, and they do not belong in a browser or a mobile app.\n\n## Conventions\n\n- **JSON only.** A request with a body must send `Content-Type: application/json`, or it is rejected with `415`.\n- **Strict requests, tolerant responses.** An unknown or misspelled field is a `400` naming the field. New response fields may be added at any time — ignore the ones you do not know rather than failing on them.\n- **Timestamps** are ISO 8601. Inputs may carry any offset and are normalised to UTC; outputs are always UTC.\n- **Every response carries `X-Request-Id`.** Error bodies echo it as `request_id`. Quote it in a support request.\n- **Errors share one shape** and one code vocabulary. Switch on `error.code`, not on the HTTP status: two codes share `409` and two share `422`.\n- **Pagination** is cursor-based. Follow `next_cursor` until it is `null`; treat the cursor as opaque.\n- **Versioning** is in the path. Breaking changes would arrive as `/v2`; everything within `/v1` is additive.\n\n## Retries and consistency\n\nBoth create endpoints honour `Idempotency-Key`, scoped to your key for 24 hours, which makes a timed-out request safe to repeat. Retries must be byte-identical to replay rather than conflict.\n\nWrites are durable before the response returns. Propagation to distant edge locations is eventually consistent, so an edit or a deletion can take up to about 60 seconds to be visible everywhere — the management API is immediately consistent, the redirect edge is not.\n\n## Limits\n\nNo per-key rate limits are enforced in v1, and no `RateLimit-*` headers are sent; the `rate_limited` code is reserved for when they arrive. A batch is capped at 100 items, tags at 10 per link, and a page at 100 links.",
+    "contact": {
+      "name": "r301.dev",
+      "url": "https://www.r301.dev"
+    },
+    "license": {
+      "name": "Proprietary",
+      "url": "https://www.r301.dev/terms"
+    },
+    "termsOfService": "https://www.r301.dev/terms"
+  },
+  "servers": [
+    {
+      "url": "https://api.r301.dev",
+      "description": "Production. Links created here resolve at https://r301.dev/{slug}."
+    },
+    {
+      "url": "https://api-staging.r301.dev",
+      "description": "Staging. Separate database, cache and API keys; links resolve at https://staging.r301.dev/{slug}. Suitable for integration testing, not load testing — it shares account-level quotas with production."
+    }
+  ],
+  "tags": [
+    {
+      "name": "Links",
+      "description": "Create, read, update and delete short links, individually or 100 at a time. This is the whole of the write surface."
+    },
+    {
+      "name": "Tags & stats",
+      "description": "Click counts for a single link, aggregate totals for a tag, and the list of tags in use. Counts are read-only and at-least-approximate by design."
+    },
+    {
+      "name": "Meta",
+      "description": "Unauthenticated endpoints about the service itself: the liveness probe and this document. Safe to call before you have a key."
+    }
+  ],
+  "externalDocs": {
+    "url": "https://www.r301.dev/docs",
+    "description": "Guides, quickstarts and the redirect-edge contract."
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API key minted by `pnpm mint-key`, sent as `Authorization: Bearer r301_live_…`."
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ],
+            "description": "Always `ok` — any other outcome is a non-200 or no response at all.",
+            "example": "ok"
+          },
+          "version": {
+            "type": "string",
+            "description": "The git SHA of the running deploy, or `dev` when none was injected. The same string appears as `info.version` in the served OpenAPI document, so a document and a probe taken from one deploy can never disagree about which deploy they are — which is what makes “which release broke it” answerable.",
+            "example": "047714d"
+          },
+          "env": {
+            "type": "string",
+            "description": "Which environment answered: `production` or `staging`.",
+            "example": "production"
+          }
+        },
+        "required": [
+          "status",
+          "version",
+          "env"
+        ],
+        "description": "Liveness of the Worker itself. Reads configuration only — it deliberately touches neither the database nor the cache, so a storage incident cannot take the probe down with it. It is therefore a liveness check, not a dependency check.",
+        "example": {
+          "status": "ok",
+          "version": "047714d",
+          "env": "production"
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_request",
+                  "unauthorized",
+                  "forbidden",
+                  "not_found",
+                  "method_not_allowed",
+                  "slug_taken",
+                  "idempotency_conflict",
+                  "slug_reserved",
+                  "destination_invalid",
+                  "destination_blocked",
+                  "rate_limited",
+                  "internal"
+                ],
+                "description": "A stable, machine-readable reason. Switch on this rather than on the HTTP status: two codes share `409` and two share `422`.\n\n| code | status | meaning |\n| --- | --- | --- |\n| `invalid_request` | 400 | The request could not be understood: malformed JSON, a schema violation, an unknown or misspelled field, a bad query parameter, a batch over 100 items, or an `expires_at` that is not in the future. Validation is strict — an unknown field is an error naming the field, never a silently ignored one. Also the code carried by a `415`. |\n| `unauthorized` | 401 | The `Authorization` header is missing, malformed, or names a key that is unknown or revoked. All four are reported identically and deliberately: distinguishing them would turn the endpoint into an oracle for guessing valid keys. Revocation takes effect immediately — there is no key cache. |\n| `forbidden` | 403 | Reserved for an explicit capability denial. Unused in v1, where any live key may manage any of the owner's links. |\n| `not_found` | 404 | No such resource — either it never existed, or it was deleted. Deleted links are indistinguishable from links that never existed, so a takedown cannot be confirmed by probing. |\n| `method_not_allowed` | 405 | The route exists but does not accept this HTTP method. |\n| `slug_taken` | 409 | The requested custom slug is already in use. This includes slugs held by **deleted** links: a tombstone keeps its slug reserved so a short URL already in circulation can never be re-pointed at someone else's destination. |\n| `idempotency_conflict` | 409 | The `Idempotency-Key` was reused with a different request body, or its original request is still in flight. The message distinguishes the two. Retries must be byte-identical to replay rather than conflict. |\n| `slug_reserved` | 422 | The requested slug is on the reserved-word list (`api`, `admin`, `login`, `robots.txt`, and similar). Checked case-insensitively, so `Admin` is reserved just as `admin` is. |\n| `destination_invalid` | 422 | The destination URL failed validation — wrong scheme, unparseable, over 2048 characters, a private or loopback host, embedded credentials, or `r301.dev` itself. The message names which rule it broke. |\n| `destination_blocked` | 422 | Reserved. The destination was found on a threat list. Not returned in v1; safe-browsing checks arrive with the public launch. |\n| `rate_limited` | 429 | Reserved. The API key has exceeded its request quota. Not returned in v1 — there are no per-key quotas during the pilot, and no `RateLimit-*` headers are sent. Handle it anyway: it will start appearing at public launch, and the redirect edge is already protected by a network-level per-IP rule that answers outside this API. |\n| `internal` | 500 | An unexpected failure. Also returned when the database commit succeeded but the awaited cache write did not — retry with the same `Idempotency-Key` and the state converges. Every occurrence is reported to error tracking with the `request_id` in this body. |"
+              },
+              "message": {
+                "type": "string",
+                "description": "A human-readable explanation, written for a developer reading a log. Intended to be displayed or logged, never parsed — wording may change without notice.",
+                "example": "Slug 'launch' is already in use."
+              },
+              "field": {
+                "type": "string",
+                "description": "The single request field at fault, when exactly one is. Dotted for nested paths, and the offending key itself for an unknown field. Absent when no one field is to blame. Only the first problem is reported — fix it and re-submit to see the next.",
+                "example": "slug"
+              },
+              "request_id": {
+                "type": "string",
+                "description": "Echoes the `X-Request-Id` response header, so an error body pasted into a bug report carries everything needed to find the request.",
+                "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "request_id"
+            ],
+            "description": "The single object every failure is reported in. There is no top-level `errors` array and no alternative shape — one failure is reported per response."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "Every error from every endpoint has this shape — there is no second error format to special-case. The one exception is a batch, whose per-item errors are the same object minus `request_id`, since the batch's own `200` carries that once in the header."
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "The path segment of the short URL. Assigned by you, or generated as 7 base62 characters when you omit it. Immutable for the life of the link.",
+            "example": "aB3xY9k"
+          },
+          "short_url": {
+            "type": "string",
+            "description": "The full short URL, ready to paste into a message. Built from the environment's redirect host, so a link created on staging returns a staging URL — never hand-assemble this from `slug` and a hard-coded host.",
+            "example": "https://r301.dev/aB3xY9k"
+          },
+          "destination": {
+            "type": "string",
+            "description": "Where the link currently sends visitors, byte for byte as it was stored.",
+            "example": "https://clinic.example.com/appt/9182?t=abc123"
+          },
+          "redirect_type": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  301
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  302
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  307
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  308
+                ]
+              }
+            ],
+            "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+            "example": 302
+          },
+          "is_active": {
+            "type": "boolean",
+            "description": "Whether the link redirects. When `false` the short URL answers `404` — the same as an unknown link, so deactivation is indistinguishable from never having existed. This is the immediate kill switch; `expires_at` is the scheduled one.",
+            "example": true
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the link stops redirecting, as an ISO 8601 UTC timestamp, or `null` if it never expires. Past this instant the short URL answers `410 Gone`. Deactivation outranks expiry: an inactive link answers `404` whether or not it has also expired.",
+            "example": "2026-09-30T12:00:00Z"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The link's tags, as last written. An empty array means untagged; the field is never `null`.",
+            "example": [
+              "tenant:42",
+              "kind:appointment"
+            ]
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Your own identifier for this link, or `null` if none was set.",
+            "example": "appt_9182"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When the link was created, as an ISO 8601 UTC timestamp.",
+            "example": "2026-08-31T10:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "When the link was last modified, as an ISO 8601 UTC timestamp. Equal to `created_at` until the first `PATCH`. Click counting does **not** touch it — counts are not modifications of the link.",
+            "example": "2026-08-31T10:00:00Z"
+          }
+        },
+        "required": [
+          "slug",
+          "short_url",
+          "destination",
+          "redirect_type",
+          "is_active",
+          "expires_at",
+          "tags",
+          "external_id",
+          "created_at",
+          "updated_at"
+        ],
+        "description": "A short link. **Click counts are deliberately absent** — they live on `GET /v1/links/{slug}/stats`, so listing links stays a cheap read that never has to aggregate counters.\n\nTreat unknown fields as additive and ignore them: new fields may appear without a version bump, and doing so is not a breaking change.",
+        "example": {
+          "slug": "aB3xY9k",
+          "short_url": "https://r301.dev/aB3xY9k",
+          "destination": "https://clinic.example.com/appt/9182?t=abc123",
+          "redirect_type": 302,
+          "is_active": true,
+          "expires_at": "2026-09-30T12:00:00Z",
+          "tags": [
+            "tenant:42",
+            "kind:appointment"
+          ],
+          "external_id": "appt_9182",
+          "created_at": "2026-08-31T10:00:00Z",
+          "updated_at": "2026-08-31T10:00:00Z"
+        }
+      },
+      "LinkList": {
+        "type": "object",
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            },
+            "description": "One page of links, ordered by `created_at` descending — newest first. Deleted links never appear. An empty array means no link matched, which is a `200`, not a `404`."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `?cursor=` to fetch the next page, or `null` when this was the last page. Treat it as an opaque token — it is a base64url keyset position whose encoding may change. It does not expire, and it is stable against inserts: links created after you started paging will not shift rows into or out of later pages.",
+            "example": "eyJjIjoxNzU2NjM2ODAwMDAwLCJpIjo0MjF9"
+          }
+        },
+        "required": [
+          "links",
+          "next_cursor"
+        ],
+        "description": "A page of links plus the cursor for the next one.",
+        "example": {
+          "links": [
+            {
+              "slug": "aB3xY9k",
+              "short_url": "https://r301.dev/aB3xY9k",
+              "destination": "https://clinic.example.com/appt/9182?t=abc123",
+              "redirect_type": 302,
+              "is_active": true,
+              "expires_at": "2026-09-30T12:00:00Z",
+              "tags": [
+                "tenant:42",
+                "kind:appointment"
+              ],
+              "external_id": "appt_9182",
+              "created_at": "2026-08-31T10:00:00Z",
+              "updated_at": "2026-08-31T10:00:00Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      },
+      "BatchResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "description": "The zero-based position of this item in the `links` array you sent. Results are returned in request order, so this is also its index here — match on it rather than assuming.",
+                      "example": 0
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "created"
+                      ],
+                      "description": "This item was created.",
+                      "example": "created"
+                    },
+                    "link": {
+                      "$ref": "#/components/schemas/Link"
+                    }
+                  },
+                  "required": [
+                    "index",
+                    "status",
+                    "link"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "description": "The zero-based position of this item in the `links` array you sent.",
+                      "example": 1
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "error"
+                      ],
+                      "description": "This item failed; the others were unaffected.",
+                      "example": "error"
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "The same code vocabulary as the error envelope — most often `slug_taken`, `slug_reserved`, `destination_invalid` or `invalid_request`.",
+                          "example": "slug_taken"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "A human-readable explanation of why this one item failed.",
+                          "example": "Slug 'launch' is already in use."
+                        },
+                        "field": {
+                          "type": "string",
+                          "description": "The field of this item at fault, when exactly one is.",
+                          "example": "slug"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "Why this item failed."
+                    }
+                  },
+                  "required": [
+                    "index",
+                    "status",
+                    "error"
+                  ]
+                }
+              ]
+            },
+            "description": "One result per submitted item, in request order. Each is either a `created` entry carrying the link, or an `error` entry carrying the reason."
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "created": {
+                "type": "integer",
+                "description": "How many items were created.",
+                "example": 1
+              },
+              "failed": {
+                "type": "integer",
+                "description": "How many items failed.",
+                "example": 1
+              }
+            },
+            "required": [
+              "created",
+              "failed"
+            ],
+            "description": "Totals across the batch. `created + failed` always equals the number of items you sent, so a mismatch means a truncated response."
+          }
+        },
+        "required": [
+          "items",
+          "summary"
+        ],
+        "description": "The outcome of a bulk create. **A batch always answers `200`**, even when every item failed — the status describes the request, and the items describe the work. Check `summary.failed` rather than the HTTP status.\n\nItems are processed sequentially and are **not** transactional: successful items stay created even if later ones fail. There is no partial rollback, so retry only the failed indices (with a fresh `Idempotency-Key`, since one key covers a whole batch).",
+        "example": {
+          "items": [
+            {
+              "index": 0,
+              "status": "created",
+              "link": {
+                "slug": "aB3xY9k",
+                "short_url": "https://r301.dev/aB3xY9k",
+                "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                "redirect_type": 302,
+                "is_active": true,
+                "expires_at": "2026-09-30T12:00:00Z",
+                "tags": [
+                  "tenant:42",
+                  "kind:appointment"
+                ],
+                "external_id": "appt_9182",
+                "created_at": "2026-08-31T10:00:00Z",
+                "updated_at": "2026-08-31T10:00:00Z"
+              }
+            },
+            {
+              "index": 1,
+              "status": "error",
+              "error": {
+                "code": "slug_taken",
+                "message": "Slug 'launch' is already in use.",
+                "field": "slug"
+              }
+            }
+          ],
+          "summary": {
+            "created": 1,
+            "failed": 1
+          }
+        }
+      },
+      "LinkStats": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "The link these counts belong to.",
+            "example": "aB3xY9k"
+          },
+          "click_count": {
+            "type": "integer",
+            "description": "How many times the link has been followed. **At-least-approximate by design**: counting happens after the redirect has been sent, so a count may be lost rather than delay a visitor. Observed drift is under 0.1%.\n\nOnly successful GET redirects count. `HEAD` requests, `404`s, `410`s, and any request whose user-agent matches the bot denylist (messenger link previews, email link scanners, crawlers, HTTP tooling) are excluded — which is why this number is typically *lower* than a raw access log for the same link. Scanners with browser-like user-agents are not detectable and do still count.",
+            "example": 123
+          },
+          "last_clicked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the link was last followed, as an ISO 8601 UTC timestamp, or `null` if it never has been. Subject to the same filtering as `click_count`.",
+            "example": "2026-09-01T08:14:22Z"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When the link was created, so a rate can be computed without a second call.",
+            "example": "2026-08-31T10:00:00Z"
+          }
+        },
+        "required": [
+          "slug",
+          "click_count",
+          "last_clicked_at",
+          "created_at"
+        ],
+        "description": "Click totals for one link, kept separate from the link resource itself.",
+        "example": {
+          "slug": "aB3xY9k",
+          "click_count": 123,
+          "last_clicked_at": "2026-09-01T08:14:22Z",
+          "created_at": "2026-08-31T10:00:00Z"
+        }
+      },
+      "TagStats": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "The tag these totals cover, echoed from the query.",
+            "example": "tenant:42"
+          },
+          "link_count": {
+            "type": "integer",
+            "description": "How many live links carry this tag. Deleted links are excluded. An unknown tag reports `0` rather than `404` — there is nothing to probe for.",
+            "example": 17
+          },
+          "click_count": {
+            "type": "integer",
+            "description": "Total clicks across every live link carrying this tag, with the same filtering and the same at-least-approximate guarantee as a single link's count.",
+            "example": 940
+          }
+        },
+        "required": [
+          "tag",
+          "link_count",
+          "click_count"
+        ],
+        "description": "Aggregate totals across every live link carrying one tag.",
+        "example": {
+          "tag": "tenant:42",
+          "link_count": 17,
+          "click_count": 940
+        }
+      },
+      "TagList": {
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The tag name, exactly as it was written on the links carrying it.",
+                  "example": "kind:appointment"
+                },
+                "link_count": {
+                  "type": "integer",
+                  "description": "How many live links carry it.",
+                  "example": 12
+                }
+              },
+              "required": [
+                "name",
+                "link_count"
+              ]
+            },
+            "description": "Every tag in use, sorted by name. Tags with no live links left do not appear. Unpaginated in v1 — pilot tag cardinality is small; if yours approaches a thousand, say so before relying on this."
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "description": "Every tag currently in use, with its live link count.",
+        "example": {
+          "tags": [
+            {
+              "name": "kind:appointment",
+              "link_count": 12
+            },
+            {
+              "name": "tenant:42",
+              "link_count": 17
+            }
+          ]
+        }
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Liveness probe",
+        "security": [],
+        "description": "Reports that the Worker is serving, and which deploy is answering. **Unauthenticated** — a probe that needed a key would fail whenever authentication did, which is exactly when you need it to answer.\n\nReads configuration only: it deliberately touches neither the database nor the cache, so a storage incident cannot take the probe down with it. It is a liveness check, not a dependency check — a `200` here does not promise that writes are working.\n\n`version` is the running deploy’s git SHA, matching `info.version` in the OpenAPI document served by the same deploy.",
+        "responses": {
+          "200": {
+            "description": "The Worker is serving, with the deploy's version and environment.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "ok",
+                  "version": "047714d",
+                  "env": "production"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/links": {
+      "post": {
+        "operationId": "createLink",
+        "tags": [
+          "Links"
+        ],
+        "summary": "Create a short link",
+        "description": "Mints one short link and returns it. `destination` is the only required field: omit `slug` and you get a 7-character base62 slug, omit `redirect_type` and you get a `302`.\n\nThe link is live at its `short_url` as soon as this returns — the database commit and the edge cache write both complete before the response, so there is no window in which a created link 404s at the host that created it.\n\nSend an `Idempotency-Key` to make the call safe to retry: a network timeout can then be retried without risking a second link.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "description": "An opaque key of your choosing (1–255 characters) that makes this request safe to retry — a UUID per logical operation is the usual choice.\n\nScope is (API key, key) and the window is **24 hours**. Within it:\n- the same key with a **byte-identical** body replays the original status and body, with `Idempotency-Replayed: true`\n- the same key with a **different** body is `409 idempotency_conflict`\n- the same key while the original is **still in flight** is also `409` (the message distinguishes the two)\n\nRetries must be byte-identical because the stored fingerprint is a hash of the raw request body — re-serialising with different key order or spacing counts as a different payload. Reservations are released if a request fails, so a `500` (including the one D20 returns when the KV write fails) can be retried with the same key until it converges.\n\nFor a batch, one key covers the whole request: a replay returns the stored per-item results verbatim.",
+              "example": "8b1f0c2a-4d3e-4f6a-9b2c-7e5d1a3f0c94"
+            },
+            "required": false,
+            "description": "An opaque key of your choosing (1–255 characters) that makes this request safe to retry — a UUID per logical operation is the usual choice.\n\nScope is (API key, key) and the window is **24 hours**. Within it:\n- the same key with a **byte-identical** body replays the original status and body, with `Idempotency-Replayed: true`\n- the same key with a **different** body is `409 idempotency_conflict`\n- the same key while the original is **still in flight** is also `409` (the message distinguishes the two)\n\nRetries must be byte-identical because the stored fingerprint is a hash of the raw request body — re-serialising with different key order or spacing counts as a different payload. Reservations are released if a request fails, so a `500` (including the one D20 returns when the KV write fails) can be retried with the same key until it converges.\n\nFor a batch, one key covers the whole request: a replay returns the stored per-item results verbatim.",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The link to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "destination": {
+                    "type": "string",
+                    "description": "Where the short link sends visitors. Must be an absolute `http:` or `https:` URL of at most 2048 characters that parses under the WHATWG URL standard.\n\nRejected with `422 destination_invalid`:\n- any scheme other than `http`/`https` (notably `javascript:`, `data:`, `file:`)\n- private, loopback or link-local hosts — `localhost`, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` and their IPv6 equivalents (internationalised hosts are normalised to punycode before this check)\n- embedded credentials (`https://user:pass@host/`)\n- `r301.dev` itself, which would create a redirect loop\n\nThe URL is stored and returned **verbatim**. Query strings are preserved exactly, so signed or tokenised destinations survive the round trip; a query string on the *short* URL is dropped rather than merged into this one.",
+                    "examples": [
+                      "https://clinic.example.com/appt/9182?t=abc123",
+                      "https://clinic.example.com/invoice/4471"
+                    ]
+                  },
+                  "slug": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9_-]{3,64}$",
+                    "description": "The path segment of the short URL — `https://r301.dev/{slug}`. Omit it and a 7-character base62 slug is generated for you.\n\n3–64 characters from `a–z`, `A–Z`, `0–9`, `_` and `-`. **Matching is case-sensitive**, so `Launch` and `launch` are two different links; the reserved-word check is *not* case-sensitive, so neither `admin` nor `Admin` can be claimed.\n\n- `409 slug_taken` — already in use, including by a deleted link, whose slug stays blocked so it can never be silently taken over\n- `422 slug_reserved` — on the reserved-word list (`api`, `admin`, `login`, …)\n\nImmutable once created: `PATCH` rejects it as an unknown field. To change a slug, create a new link and delete the old one.",
+                    "examples": [
+                      "appt-9182",
+                      "spring-checkup"
+                    ]
+                  },
+                  "redirect_type": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          301
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          302
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          307
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          308
+                        ]
+                      }
+                    ],
+                    "default": 302,
+                    "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+                    "example": 302
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the link stops redirecting, as an ISO 8601 timestamp **with an offset** (`2026-09-30T12:00:00Z` or `2026-09-30T17:30:00+05:30`). A local time without an offset names no instant and is rejected. Stored and returned normalised to UTC.\n\nMust be strictly in the future at write time — creating an already-expired link is a footgun, so `400 invalid_request` is returned instead. To switch a link off *now*, set `is_active: false`.\n\nAfter this instant the short URL answers **410 Gone** rather than 404: the recipient of an expired appointment link learns it existed and is over. Omit for a link that never expires; send `null` in a `PATCH` to clear an existing expiry.",
+                    "example": "2026-09-30T12:00:00Z"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "description": "A single tag name."
+                    },
+                    "maxItems": 10,
+                    "description": "Free-form labels for grouping and filtering, at most 10 per link and 64 characters each. Surrounding whitespace is trimmed, so ` x ` is the one-character tag `x`; a tag that trims to nothing is rejected.\n\nTags are created implicitly on first use — there is no endpoint to register one. A `namespace:value` convention keeps them tidy and is what the aggregate endpoints are designed around, but nothing enforces it.\n\nIn `PATCH` this field **replaces** the whole set rather than merging into it: send the full list you want, or `[]` to clear every tag.",
+                    "examples": [
+                      [
+                        "tenant:42",
+                        "kind:appointment"
+                      ],
+                      [
+                        "kind:invoice"
+                      ]
+                    ]
+                  },
+                  "external_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "Your own identifier for whatever this link points at, up to 128 characters. Stored verbatim, returned on the link, and filterable via `GET /v1/links?external_id=…`, so you can find r301 links from your records without keeping a mapping table.\n\n**Deliberately not unique** — several links may carry the same value (a reminder and a confirmation for one appointment, say). It is not a deduplication key: use `Idempotency-Key` for that. Send `null` in a `PATCH` to clear it.",
+                    "example": "appt_9182"
+                  }
+                },
+                "required": [
+                  "destination"
+                ],
+                "additionalProperties": false,
+                "description": "Everything needed to mint a short link. `destination` is the only required field; every other field has a sensible default.\n\nValidation is **strict**: an unknown or misspelled field is a `400` naming the field, never a silently ignored one. Send `Idempotency-Key` to make the request safe to retry.",
+                "examples": [
+                  {
+                    "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                    "tags": [
+                      "tenant:42",
+                      "kind:appointment"
+                    ],
+                    "external_id": "appt_9182",
+                    "expires_at": "2026-09-30T12:00:00Z"
+                  },
+                  {
+                    "destination": "https://clinic.example.com/invoice/4471",
+                    "slug": "inv-4471",
+                    "redirect_type": 301
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The link was created and is already resolving.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ],
+                  "description": "Present with the value `true` when this response was replayed from a stored result rather than executed. Absent on a request that actually ran. A replay returns the original status and body byte for byte, including any per-item errors in a batch.",
+                  "example": "true"
+                },
+                "required": false,
+                "description": "Present with the value `true` when this response was replayed from a stored result rather than executed. Absent on a request that actually ran. A replay returns the original status and body byte for byte, including any per-item errors in a batch."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "slug": "aB3xY9k",
+                  "short_url": "https://r301.dev/aB3xY9k",
+                  "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                  "redirect_type": 302,
+                  "is_active": true,
+                  "expires_at": "2026-09-30T12:00:00Z",
+                  "tags": [
+                    "tenant:42",
+                    "kind:appointment"
+                  ],
+                  "external_id": "appt_9182",
+                  "created_at": "2026-08-31T10:00:00Z",
+                  "updated_at": "2026-08-31T10:00:00Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, unknown field or bad value.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "Unrecognized key: 'destinaton'.",
+                    "field": "destinaton",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The slug is already in use (including by a deleted link), or the Idempotency-Key was reused with a different payload.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "examples": {
+                  "slug_taken": {
+                    "summary": "Slug 'launch' is already in use.",
+                    "value": {
+                      "error": {
+                        "code": "slug_taken",
+                        "message": "Slug 'launch' is already in use.",
+                        "field": "slug",
+                        "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                      }
+                    }
+                  },
+                  "idempotency_conflict": {
+                    "summary": "This Idempotency-Key was already used with a different payload.",
+                    "value": {
+                      "error": {
+                        "code": "idempotency_conflict",
+                        "message": "This Idempotency-Key was already used with a different payload.",
+                        "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request bodies must be sent as application/json.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "Content-Type must be application/json.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The destination failed validation, or the slug is reserved.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "examples": {
+                  "destination_invalid": {
+                    "summary": "Destination host must not be a private or loopback address.",
+                    "value": {
+                      "error": {
+                        "code": "destination_invalid",
+                        "message": "Destination host must not be a private or loopback address.",
+                        "field": "destination",
+                        "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                      }
+                    }
+                  },
+                  "slug_reserved": {
+                    "summary": "Slug 'admin' is reserved.",
+                    "value": {
+                      "error": {
+                        "code": "slug_reserved",
+                        "message": "Slug 'admin' is reserved.",
+                        "field": "slug",
+                        "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listLinks",
+        "tags": [
+          "Links"
+        ],
+        "summary": "List links",
+        "description": "Returns a page of links, newest first, filtered by any combination of `tag`, `active`, `created_after` and `external_id` (all AND-combined). Deleted links never appear.\n\nPagination is cursor-based: follow `next_cursor` until it is `null`. Cursors are keyset positions, not offsets, so pages do not shift or duplicate rows when links are created while you are paging.\n\nNo filter narrows by which key created a link: every key belonging to the account sees every link.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only links carrying this tag, matched exactly — no prefix or wildcard matching. Filters combine with AND, so this narrows any other filter rather than widening it.",
+              "example": "tenant:42"
+            },
+            "required": false,
+            "description": "Only links carrying this tag, matched exactly — no prefix or wildcard matching. Filters combine with AND, so this narrows any other filter rather than widening it.",
+            "name": "tag",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Only active (`true`) or only deactivated (`false`) links. Omit to get both. Must be exactly `true` or `false` — `1`, `yes` and `TRUE` are rejected rather than guessed at, because this is the filter that decides whether disabled links appear.",
+              "example": "true"
+            },
+            "required": false,
+            "description": "Only active (`true`) or only deactivated (`false`) links. Omit to get both. Must be exactly `true` or `false` — `1`, `yes` and `TRUE` are rejected rather than guessed at, because this is the filter that decides whether disabled links appear.",
+            "name": "active",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Only links created strictly after this instant. ISO 8601 with an offset (`2026-08-01T00:00:00Z`). Useful for incremental sync alongside the default newest-first ordering.",
+              "example": "2026-08-01T00:00:00Z"
+            },
+            "required": false,
+            "description": "Only links created strictly after this instant. ISO 8601 with an offset (`2026-08-01T00:00:00Z`). Useful for incremental sync alongside the default newest-first ordering.",
+            "name": "created_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Only links whose `external_id` matches exactly. Since external ids are deliberately non-unique, this may return several links — it is a lookup, not a get-by-id.",
+              "example": "appt_9182"
+            },
+            "required": false,
+            "description": "Only links whose `external_id` matches exactly. Since external ids are deliberately non-unique, this may return several links — it is a lookup, not a get-by-id.",
+            "name": "external_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The `next_cursor` from a previous page. Opaque — pass it back unmodified. Omit for the first page. Cursors do not expire, and keep the same filters as the request that produced them, so re-sending the filters is unnecessary but harmless.",
+              "example": "eyJjIjoxNzU2NjM2ODAwMDAwLCJpIjo0MjF9"
+            },
+            "required": false,
+            "description": "The `next_cursor` from a previous page. Opaque — pass it back unmodified. Omit for the first page. Cursors do not expire, and keep the same filters as the request that produced them, so re-sending the filters is unnecessary but harmless.",
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d+$",
+              "default": 25,
+              "description": "How many links to return, 1–100. Defaults to 25. A full page does not imply more results — check `next_cursor` for that.",
+              "example": "25"
+            },
+            "required": false,
+            "description": "How many links to return, 1–100. Defaults to 25. A full page does not imply more results — check `next_cursor` for that.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of links, newest first, with the next cursor.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "links": [
+                    {
+                      "slug": "aB3xY9k",
+                      "short_url": "https://r301.dev/aB3xY9k",
+                      "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                      "redirect_type": 302,
+                      "is_active": true,
+                      "expires_at": "2026-09-30T12:00:00Z",
+                      "tags": [
+                        "tenant:42",
+                        "kind:appointment"
+                      ],
+                      "external_id": "appt_9182",
+                      "created_at": "2026-08-31T10:00:00Z",
+                      "updated_at": "2026-08-31T10:00:00Z"
+                    }
+                  ],
+                  "next_cursor": null
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/LinkList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown filter, bad value or an unreadable cursor.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "limit must be a whole number.",
+                    "field": "limit",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/links/batch": {
+      "post": {
+        "operationId": "createLinksBatch",
+        "tags": [
+          "Links"
+        ],
+        "summary": "Create up to 100 short links",
+        "description": "Creates many links in one round trip — the endpoint to use when a job produces a batch of messages rather than one.\n\n**Always answers `200`, even if every item failed.** The HTTP status describes the request; the items describe the work. Read `summary.failed` and the per-item `status` rather than branching on the status code. Only a fault in the request as a whole — `links` missing, not an array, empty, or over 100 items — is a `400`, and it is rejected before any item is created.\n\nItems are processed sequentially and are **not** transactional: earlier successes stand even if later items fail, and there is no rollback. Retry just the failed indices, with a fresh `Idempotency-Key` — one key covers a whole batch, so reusing it replays the original mixed result instead of retrying anything.\n\nExpect this to take longer than a single create; it is budgeted at under two seconds for a full 100 items.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "description": "An opaque key of your choosing (1–255 characters) that makes this request safe to retry — a UUID per logical operation is the usual choice.\n\nScope is (API key, key) and the window is **24 hours**. Within it:\n- the same key with a **byte-identical** body replays the original status and body, with `Idempotency-Replayed: true`\n- the same key with a **different** body is `409 idempotency_conflict`\n- the same key while the original is **still in flight** is also `409` (the message distinguishes the two)\n\nRetries must be byte-identical because the stored fingerprint is a hash of the raw request body — re-serialising with different key order or spacing counts as a different payload. Reservations are released if a request fails, so a `500` (including the one D20 returns when the KV write fails) can be retried with the same key until it converges.\n\nFor a batch, one key covers the whole request: a replay returns the stored per-item results verbatim.",
+              "example": "8b1f0c2a-4d3e-4f6a-9b2c-7e5d1a3f0c94"
+            },
+            "required": false,
+            "description": "An opaque key of your choosing (1–255 characters) that makes this request safe to retry — a UUID per logical operation is the usual choice.\n\nScope is (API key, key) and the window is **24 hours**. Within it:\n- the same key with a **byte-identical** body replays the original status and body, with `Idempotency-Replayed: true`\n- the same key with a **different** body is `409 idempotency_conflict`\n- the same key while the original is **still in flight** is also `409` (the message distinguishes the two)\n\nRetries must be byte-identical because the stored fingerprint is a hash of the raw request body — re-serialising with different key order or spacing counts as a different payload. Reservations are released if a request fails, so a `500` (including the one D20 returns when the KV write fails) can be retried with the same key until it converges.\n\nFor a batch, one key covers the whole request: a replay returns the stored per-item results verbatim.",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The links to create, 1–100 of them.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "links": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "description": "Everything needed to mint a short link. `destination` is the only required field; every other field has a sensible default.\n\nValidation is **strict**: an unknown or misspelled field is a `400` naming the field, never a silently ignored one. Send `Idempotency-Key` to make the request safe to retry.",
+                      "properties": {
+                        "destination": {
+                          "type": "string",
+                          "title": "Destination URL",
+                          "description": "Where the short link sends visitors. Must be an absolute `http:` or `https:` URL of at most 2048 characters that parses under the WHATWG URL standard.\n\nRejected with `422 destination_invalid`:\n- any scheme other than `http`/`https` (notably `javascript:`, `data:`, `file:`)\n- private, loopback or link-local hosts — `localhost`, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` and their IPv6 equivalents (internationalised hosts are normalised to punycode before this check)\n- embedded credentials (`https://user:pass@host/`)\n- `r301.dev` itself, which would create a redirect loop\n\nThe URL is stored and returned **verbatim**. Query strings are preserved exactly, so signed or tokenised destinations survive the round trip; a query string on the *short* URL is dropped rather than merged into this one.",
+                          "examples": [
+                            "https://clinic.example.com/appt/9182?t=abc123",
+                            "https://clinic.example.com/invoice/4471"
+                          ]
+                        },
+                        "slug": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_-]{3,64}$",
+                          "title": "Custom slug",
+                          "description": "The path segment of the short URL — `https://r301.dev/{slug}`. Omit it and a 7-character base62 slug is generated for you.\n\n3–64 characters from `a–z`, `A–Z`, `0–9`, `_` and `-`. **Matching is case-sensitive**, so `Launch` and `launch` are two different links; the reserved-word check is *not* case-sensitive, so neither `admin` nor `Admin` can be claimed.\n\n- `409 slug_taken` — already in use, including by a deleted link, whose slug stays blocked so it can never be silently taken over\n- `422 slug_reserved` — on the reserved-word list (`api`, `admin`, `login`, …)\n\nImmutable once created: `PATCH` rejects it as an unknown field. To change a slug, create a new link and delete the old one.",
+                          "examples": [
+                            "appt-9182",
+                            "spring-checkup"
+                          ]
+                        },
+                        "redirect_type": {
+                          "default": 302,
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "const": 301
+                            },
+                            {
+                              "type": "number",
+                              "const": 302
+                            },
+                            {
+                              "type": "number",
+                              "const": 307
+                            },
+                            {
+                              "type": "number",
+                              "const": 308
+                            }
+                          ],
+                          "title": "Redirect status",
+                          "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+                          "example": 302
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                          "title": "Expiry",
+                          "description": "When the link stops redirecting, as an ISO 8601 timestamp **with an offset** (`2026-09-30T12:00:00Z` or `2026-09-30T17:30:00+05:30`). A local time without an offset names no instant and is rejected. Stored and returned normalised to UTC.\n\nMust be strictly in the future at write time — creating an already-expired link is a footgun, so `400 invalid_request` is returned instead. To switch a link off *now*, set `is_active: false`.\n\nAfter this instant the short URL answers **410 Gone** rather than 404: the recipient of an expired appointment link learns it existed and is over. Omit for a link that never expires; send `null` in a `PATCH` to clear an existing expiry.",
+                          "example": "2026-09-30T12:00:00Z"
+                        },
+                        "tags": {
+                          "maxItems": 10,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "description": "A single tag name."
+                          },
+                          "title": "Tags",
+                          "description": "Free-form labels for grouping and filtering, at most 10 per link and 64 characters each. Surrounding whitespace is trimmed, so ` x ` is the one-character tag `x`; a tag that trims to nothing is rejected.\n\nTags are created implicitly on first use — there is no endpoint to register one. A `namespace:value` convention keeps them tidy and is what the aggregate endpoints are designed around, but nothing enforces it.\n\nIn `PATCH` this field **replaces** the whole set rather than merging into it: send the full list you want, or `[]` to clear every tag.",
+                          "examples": [
+                            [
+                              "tenant:42",
+                              "kind:appointment"
+                            ],
+                            [
+                              "kind:invoice"
+                            ]
+                          ]
+                        },
+                        "external_id": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "title": "External id",
+                          "description": "Your own identifier for whatever this link points at, up to 128 characters. Stored verbatim, returned on the link, and filterable via `GET /v1/links?external_id=…`, so you can find r301 links from your records without keeping a mapping table.\n\n**Deliberately not unique** — several links may carry the same value (a reminder and a confirmation for one appointment, say). It is not a deduplication key: use `Idempotency-Key` for that. Send `null` in a `PATCH` to clear it.",
+                          "example": "appt_9182"
+                        }
+                      },
+                      "required": [
+                        "destination"
+                      ],
+                      "additionalProperties": false,
+                      "examples": [
+                        {
+                          "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                          "tags": [
+                            "tenant:42",
+                            "kind:appointment"
+                          ],
+                          "external_id": "appt_9182",
+                          "expires_at": "2026-09-30T12:00:00Z"
+                        },
+                        {
+                          "destination": "https://clinic.example.com/invoice/4471",
+                          "slug": "inv-4471",
+                          "redirect_type": 301
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "description": "Between 1 and 100 create bodies, each identical in shape to `POST /v1/links`. Processed sequentially, in order, and **not** transactionally: each item succeeds or fails on its own."
+                  }
+                },
+                "required": [
+                  "links"
+                ],
+                "additionalProperties": false,
+                "description": "Up to 100 links in one request. Only whole-request faults — `links` missing, not an array, empty, or over the cap — are rejected with a `400`; anything wrong with an individual item becomes an `error` entry in the `200` response.",
+                "example": {
+                  "links": [
+                    {
+                      "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                      "tags": [
+                        "tenant:42",
+                        "kind:appointment"
+                      ],
+                      "external_id": "appt_9182"
+                    },
+                    {
+                      "destination": "https://clinic.example.com/appt/9183?t=def456",
+                      "slug": "launch",
+                      "tags": [
+                        "tenant:42",
+                        "kind:appointment"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-item results in request order, plus a summary. Returned even when every item failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              },
+              "Idempotency-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ],
+                  "description": "Present with the value `true` when this response was replayed from a stored result rather than executed. Absent on a request that actually ran. A replay returns the original status and body byte for byte, including any per-item errors in a batch.",
+                  "example": "true"
+                },
+                "required": false,
+                "description": "Present with the value `true` when this response was replayed from a stored result rather than executed. Absent on a request that actually ran. A replay returns the original status and body byte for byte, including any per-item errors in a batch."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "index": 0,
+                      "status": "created",
+                      "link": {
+                        "slug": "aB3xY9k",
+                        "short_url": "https://r301.dev/aB3xY9k",
+                        "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                        "redirect_type": 302,
+                        "is_active": true,
+                        "expires_at": "2026-09-30T12:00:00Z",
+                        "tags": [
+                          "tenant:42",
+                          "kind:appointment"
+                        ],
+                        "external_id": "appt_9182",
+                        "created_at": "2026-08-31T10:00:00Z",
+                        "updated_at": "2026-08-31T10:00:00Z"
+                      }
+                    },
+                    {
+                      "index": 1,
+                      "status": "error",
+                      "error": {
+                        "code": "slug_taken",
+                        "message": "Slug 'launch' is already in use.",
+                        "field": "slug"
+                      }
+                    }
+                  ],
+                  "summary": {
+                    "created": 1,
+                    "failed": 1
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`links` missing, not an array, empty, or over 100 items.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "links must contain at most 100 items.",
+                    "field": "links",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key was reused with a different payload, or its original is still in flight.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency_conflict",
+                    "message": "This Idempotency-Key was already used with a different payload.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request bodies must be sent as application/json.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "Content-Type must be application/json.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/links/{slug}/stats": {
+      "get": {
+        "operationId": "getLinkStats",
+        "tags": [
+          "Tags & stats"
+        ],
+        "summary": "Counts for one link",
+        "description": "How many times one link has been followed, and when it was last followed.\n\nCounts are **at-least-approximate**: a redirect is served first and counted afterwards, so the visitor never waits on the counter and a count may occasionally be lost. Observed drift is under 0.1%.\n\nOnly successful `GET` redirects are counted. `HEAD` requests, `404`s, `410`s and known bots — messenger link previews, email link scanners, crawlers and HTTP tooling — are filtered out, so this number is usually lower than a raw access log. That filtering is the point: an SMS link is typically fetched by the recipient’s messenger before a human ever taps it. Scanners that present a browser-like user-agent are not detectable and do still count.\n\nKept off the link resource so listing links never has to aggregate counters. A deleted link’s counts are gone with it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The link's slug — the path segment of its short URL. Matched case-sensitively.",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "The link's slug — the path segment of its short URL. Matched case-sensitively.",
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Click count, last click and creation time.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "slug": "aB3xY9k",
+                  "click_count": 123,
+                  "last_clicked_at": "2026-09-01T08:14:22Z",
+                  "created_at": "2026-08-31T10:00:00Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/LinkStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such link, or it has been deleted.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/links/{slug}": {
+      "get": {
+        "operationId": "getLink",
+        "tags": [
+          "Links"
+        ],
+        "summary": "Fetch one link",
+        "description": "Returns the link's current configuration. Click counts are **not** included — they live on `GET /v1/links/{slug}/stats`, so this stays a single cheap read.\n\nA deleted link is a `404`, indistinguishable from one that never existed.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug that could never be valid is a `404` like any other unknown slug, not a `400`: \"no such link\" is one outcome, not two.",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug that could never be valid is a `404` like any other unknown slug, not a `400`: \"no such link\" is one outcome, not two.",
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The link as currently configured.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "slug": "aB3xY9k",
+                  "short_url": "https://r301.dev/aB3xY9k",
+                  "destination": "https://clinic.example.com/appt/9182?t=abc123",
+                  "redirect_type": 302,
+                  "is_active": true,
+                  "expires_at": "2026-09-30T12:00:00Z",
+                  "tags": [
+                    "tenant:42",
+                    "kind:appointment"
+                  ],
+                  "external_id": "appt_9182",
+                  "created_at": "2026-08-31T10:00:00Z",
+                  "updated_at": "2026-08-31T10:00:00Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such link, or it has been deleted.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateLink",
+        "tags": [
+          "Links"
+        ],
+        "summary": "Update a link",
+        "description": "Changes any subset of a link's mutable fields, leaving the rest alone. `tags` replaces the whole set; `expires_at` and `external_id` accept `null` to clear them; `slug` is immutable and rejected as an unknown field.\n\nRe-pointing a link is the common case and takes effect for new visitors immediately at the responding location — but the edge cache is eventually consistent, so distant locations can serve the previous destination for up to about 60 seconds. Links created with `redirect_type: 301` or `308` may be cached by browsers for far longer, which is the trade-off those statuses buy.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug that could never be valid is a `404` like any other unknown slug, not a `400`: \"no such link\" is one outcome, not two.",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug that could never be valid is a `404` like any other unknown slug, not a `400`: \"no such link\" is one outcome, not two.",
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The fields to change. At least one.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "destination": {
+                    "type": "string",
+                    "description": "Where the short link sends visitors. Must be an absolute `http:` or `https:` URL of at most 2048 characters that parses under the WHATWG URL standard.\n\nRejected with `422 destination_invalid`:\n- any scheme other than `http`/`https` (notably `javascript:`, `data:`, `file:`)\n- private, loopback or link-local hosts — `localhost`, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` and their IPv6 equivalents (internationalised hosts are normalised to punycode before this check)\n- embedded credentials (`https://user:pass@host/`)\n- `r301.dev` itself, which would create a redirect loop\n\nThe URL is stored and returned **verbatim**. Query strings are preserved exactly, so signed or tokenised destinations survive the round trip; a query string on the *short* URL is dropped rather than merged into this one.",
+                    "examples": [
+                      "https://clinic.example.com/appt/9182?t=abc123",
+                      "https://clinic.example.com/invoice/4471"
+                    ]
+                  },
+                  "redirect_type": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          301
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          302
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          307
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          308
+                        ]
+                      }
+                    ],
+                    "description": "The HTTP status the redirect answers with. Defaults to `302`.\n\n- **301 Moved Permanently** — cached hard by browsers and intermediaries. Good for durable marketing links; a permanently cached hit never reaches the edge, so click counts under-report and later changes to the destination may not be seen by clients that already cached it.\n- **302 Found** (default) — not cached (`Cache-Control: no-store`). Every visit reaches the edge, which is what makes counts accurate and edits take effect. The right choice for transactional links.\n- **307 Temporary Redirect** — like 302, but the method and body are guaranteed to be preserved. Use when the short URL might be reached by something other than a GET.\n- **308 Permanent Redirect** — like 301, with the same method-preserving guarantee.\n\n301 and 308 are served with `Cache-Control: public, max-age=3600`; 302 and 307 with `no-store`.",
+                    "example": 302
+                  },
+                  "expires_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time",
+                    "description": "When the link stops redirecting, as an ISO 8601 timestamp **with an offset** (`2026-09-30T12:00:00Z` or `2026-09-30T17:30:00+05:30`). A local time without an offset names no instant and is rejected. Stored and returned normalised to UTC.\n\nMust be strictly in the future at write time — creating an already-expired link is a footgun, so `400 invalid_request` is returned instead. To switch a link off *now*, set `is_active: false`.\n\nAfter this instant the short URL answers **410 Gone** rather than 404: the recipient of an expired appointment link learns it existed and is over. Omit for a link that never expires; send `null` in a `PATCH` to clear an existing expiry.",
+                    "example": "2026-09-30T12:00:00Z"
+                  },
+                  "is_active": {
+                    "type": "boolean",
+                    "description": "Whether the link redirects. Setting this to `false` is the immediate kill switch: the short URL starts answering `404` — the same as an unknown link — while the link itself, its tags and its counts are all preserved. Set it back to `true` to restore it. Deactivation outranks expiry, so an inactive link answers `404` even after its `expires_at` has passed.",
+                    "example": false
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "description": "A single tag name."
+                    },
+                    "maxItems": 10,
+                    "description": "Free-form labels for grouping and filtering, at most 10 per link and 64 characters each. Surrounding whitespace is trimmed, so ` x ` is the one-character tag `x`; a tag that trims to nothing is rejected.\n\nTags are created implicitly on first use — there is no endpoint to register one. A `namespace:value` convention keeps them tidy and is what the aggregate endpoints are designed around, but nothing enforces it.\n\nIn `PATCH` this field **replaces** the whole set rather than merging into it: send the full list you want, or `[]` to clear every tag.",
+                    "examples": [
+                      [
+                        "tenant:42",
+                        "kind:appointment"
+                      ],
+                      [
+                        "kind:invoice"
+                      ]
+                    ]
+                  },
+                  "external_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 128,
+                    "description": "Your own identifier for whatever this link points at, up to 128 characters. Stored verbatim, returned on the link, and filterable via `GET /v1/links?external_id=…`, so you can find r301 links from your records without keeping a mapping table.\n\n**Deliberately not unique** — several links may carry the same value (a reminder and a confirmation for one appointment, say). It is not a deduplication key: use `Idempotency-Key` for that. Send `null` in a `PATCH` to clear it.",
+                    "example": "appt_9182"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Any non-empty subset of the mutable fields. Omitted fields are left alone; an empty object is a `400` rather than a successful no-op.\n\nTwo fields accept `null` to *clear* them — `expires_at` and `external_id`. `tags` **replaces** the whole set rather than merging, so send the full list you want (or `[]` to remove them all).\n\n`slug` is immutable and is rejected as an unknown field. A change reaches the redirect edge worldwide within about 60 seconds — the response is immediate, propagation is not.",
+                "examples": [
+                  {
+                    "destination": "https://clinic.example.com/appt/9182/rescheduled"
+                  },
+                  {
+                    "is_active": false
+                  },
+                  {
+                    "expires_at": null,
+                    "tags": [
+                      "tenant:42",
+                      "kind:archived"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The link as it now stands.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "slug": "aB3xY9k",
+                  "short_url": "https://r301.dev/aB3xY9k",
+                  "destination": "https://clinic.example.com/appt/9182/rescheduled",
+                  "redirect_type": 302,
+                  "is_active": true,
+                  "expires_at": "2026-09-30T12:00:00Z",
+                  "tags": [
+                    "tenant:42",
+                    "kind:appointment"
+                  ],
+                  "external_id": "appt_9182",
+                  "created_at": "2026-08-31T10:00:00Z",
+                  "updated_at": "2026-09-02T09:12:44Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty body, unknown field (including `slug`) or bad value.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "PATCH body must contain at least one field to update.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such link, or it has been deleted.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request bodies must be sent as application/json.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "Content-Type must be application/json.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The new destination failed validation.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "destination_invalid",
+                    "message": "Destination scheme must be http or https.",
+                    "field": "destination",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteLink",
+        "tags": [
+          "Links"
+        ],
+        "summary": "Delete a link",
+        "description": "Retires the link: its short URL stops resolving and begins answering `404`, and it disappears from every read endpoint including its own stats.\n\nThe deletion is a **tombstone**, not an erasure — the slug stays permanently reserved, so re-creating it returns `409 slug_taken`. That is deliberate: a short URL already sitting in someone’s inbox can never be taken over and re-pointed at a different destination. There is no undelete; create a new link if you need one.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug that could never be valid is a `404` like any other unknown slug, not a `400`: \"no such link\" is one outcome, not two.",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug that could never be valid is a `404` like any other unknown slug, not a `400`: \"no such link\" is one outcome, not two.",
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted. The slug remains reserved and the body is empty.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such link, or it was already deleted.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "operationId": "getTagStats",
+        "tags": [
+          "Tags & stats"
+        ],
+        "summary": "Aggregate counts for one tag",
+        "description": "Totals across every live link carrying one tag — the per-tenant or per-campaign rollup, without fetching each link’s stats individually.\n\n`tag` is required; there is no all-tags aggregate. Deleted links are excluded from both totals. A tag that does not exist reports zeros with a `200` rather than a `404`, so this cannot be used to test whether a tag exists.\n\nClick totals carry the same filtering and the same at-least-approximate guarantee as a single link’s count.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "The tag to aggregate over, matched exactly. Required — there is no all-tags aggregate, and defaulting to one would answer a question nobody asked. A tag that does not exist reports zeros with a `200`, so this endpoint cannot be used to discover which tags exist; use `GET /v1/tags` for that.",
+              "example": "tenant:42"
+            },
+            "required": true,
+            "description": "The tag to aggregate over, matched exactly. Required — there is no all-tags aggregate, and defaulting to one would answer a question nobody asked. A tag that does not exist reports zeros with a `200`, so this endpoint cannot be used to discover which tags exist; use `GET /v1/tags` for that.",
+            "name": "tag",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link and click totals across the tag's live links.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "tag": "tenant:42",
+                  "link_count": 17,
+                  "click_count": 940
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TagStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`tag` missing, empty or an unknown parameter present.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "message": "tag is required.",
+                    "field": "tag",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tags": {
+      "get": {
+        "operationId": "listTags",
+        "tags": [
+          "Tags & stats"
+        ],
+        "summary": "List tags with live link counts",
+        "description": "Every tag currently in use, sorted by name, with how many live links carry it. Tags are created implicitly when a link uses them, so this is the only way to discover which exist.\n\nA tag whose last link was deleted disappears from this list. Unpaginated in v1 — the response is the complete set.",
+        "responses": {
+          "200": {
+            "description": "Every tag, sorted by name, with its live link count.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "tags": [
+                    {
+                      "name": "kind:appointment",
+                      "link_count": 12
+                    },
+                    {
+                      "name": "tenant:42",
+                      "link_count": 17
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TagList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unauthorized",
+                    "message": "A valid API key is required.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "tags": [
+          "Meta"
+        ],
+        "summary": "This document",
+        "security": [],
+        "description": "Serves this OpenAPI 3.1 document, generated from the same schemas that validate every request — so it describes what the deployed code actually accepts, not what a hand-maintained file once said it did. **Unauthenticated**, so a client can generate its SDK before it has a key.\n\n`info.version` is the running deploy’s git SHA, matching `GET /v1/health`. Fetch it from the environment you are integrating against rather than trusting a copy.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 description of this API.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "openapi": "3.1.0",
+                  "info": {
+                    "title": "r301.dev API",
+                    "version": "047714d"
+                  }
+                },
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "openapi": {
+                      "type": "string",
+                      "description": "The OpenAPI specification version this document conforms to.",
+                      "example": "3.1.0"
+                    }
+                  },
+                  "required": [
+                    "openapi"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The method is not allowed on this route.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "message": "Method PUT is not allowed on /v1/links.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found.",
+                  "example": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                },
+                "required": true,
+                "description": "A unique id for this request, generated at the edge. It is echoed in the `request_id` field of every error body and attached to the matching Sentry event and structured log line — quote it in a support request and the exact request can be found."
+              }
+            },
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal",
+                    "message": "An unexpected error occurred.",
+                    "request_id": "3f6a1c2e-9b47-4d1a-8f30-6c2b91a7e5d4"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

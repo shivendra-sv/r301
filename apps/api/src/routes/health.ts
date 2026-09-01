@@ -13,11 +13,26 @@ import type { AppEnv } from "../types";
 export const healthRoute = createRoute({
   method: "get",
   path: "/v1/health",
+  operationId: "getHealth",
+  tags: ["Meta"],
   summary: "Liveness probe",
   security: [],
+  description:
+    "Reports that the Worker is serving, and which deploy is answering. **Unauthenticated** — a "
+    + "probe that needed a key would fail whenever authentication did, which is exactly when you "
+    + "need it to answer.\n\n"
+    + "Reads configuration only: it deliberately touches neither the database nor the cache, so "
+    + "a storage incident cannot take the probe down with it. It is a liveness check, not a "
+    + "dependency check — a `200` here does not promise that writes are working.\n\n"
+    + "`version` is the running deploy\u2019s git SHA, matching `info.version` in the OpenAPI "
+    + "document served by the same deploy.",
   responses: {
     ...PUBLIC_ROUTE_ERRORS,
-    200: jsonResponse("The Worker is serving, with the deploy's version and environment.", healthSchema),
+    200: jsonResponse(
+      "The Worker is serving, with the deploy's version and environment.",
+      healthSchema,
+      { status: "ok", version: "047714d", env: "production" },
+    ),
   },
 });
 

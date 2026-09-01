@@ -20,7 +20,17 @@ import {
 } from "../schemas/error-envelope";
 import { listLinksQuerySchema } from "../schemas/list-query";
 import { patchLinkSchema } from "../schemas/patch-link";
-import { jsonResponse, linkListSchema, linkResourceSchema } from "../schemas/resources";
+import {
+  idempotencyKeyHeaderSchema,
+  IDEMPOTENT_RESPONSE_HEADERS,
+  STANDARD_RESPONSE_HEADERS,
+} from "../schemas/headers";
+import {
+  jsonResponse,
+  LINK_EXAMPLE,
+  linkListSchema,
+  linkResourceSchema,
+} from "../schemas/resources";
 import { serializeLink } from "../serializers/link";
 import { decodeCursor, encodeCursor } from "../services/cursor";
 import { createLink } from "../services/links";
@@ -37,23 +47,57 @@ import { registerLinkStatsRoute } from "./stats";
 export const createLinkRoute = createRoute({
   method: "post",
   path: "/v1/links",
+  operationId: "createLink",
+  tags: ["Links"],
   summary: "Create a short link",
+  description:
+    "Mints one short link and returns it. `destination` is the only required field: omit `slug` "
+    + "and you get a 7-character base62 slug, omit `redirect_type` and you get a `302`.\n\n"
+    + "The link is live at its `short_url` as soon as this returns — the database commit and the "
+    + "edge cache write both complete before the response, so there is no window in which a "
+    + "created link 404s at the host that created it.\n\n"
+    + "Send an `Idempotency-Key` to make the call safe to retry: a network timeout can then be "
+    + "retried without risking a second link.",
   request: {
+    headers: idempotencyKeyHeaderSchema,
     body: {
       required: true,
+      description: "The link to create.",
       content: { "application/json": { schema: createLinkSchema } },
     },
   },
   responses: {
-    201: jsonResponse("The created link.", linkResourceSchema),
-    400: errorResponse("Malformed body, unknown field or bad value."),
+    201: jsonResponse(
+      "The link was created and is already resolving.",
+      linkResourceSchema,
+      LINK_EXAMPLE,
+      IDEMPOTENT_RESPONSE_HEADERS,
+    ),
+    400: errorResponse("Malformed body, unknown field or bad value.", {
+      code: "invalid_request",
+      message: "Unrecognized key: 'destinaton'.",
+      field: "destinaton",
+    }),
     ...AUTHENTICATED_ROUTE_ERRORS,
     ...JSON_BODY_ERRORS,
     409: errorResponse(
-      "The slug is already in use (including by a tombstone), or the "
-      + "Idempotency-Key was reused with a different payload.",
+      "The slug is already in use (including by a deleted link), or the Idempotency-Key was "
+      + "reused with a different payload.",
+      { code: "slug_taken", message: "Slug 'launch' is already in use.", field: "slug" },
+      {
+        code: "idempotency_conflict",
+        message: "This Idempotency-Key was already used with a different payload.",
+      },
     ),
-    422: errorResponse("The destination failed validation, or the slug is reserved."),
+    422: errorResponse(
+      "The destination failed validation, or the slug is reserved.",
+      {
+        code: "destination_invalid",
+        message: "Destination host must not be a private or loopback address.",
+        field: "destination",
+      },
+      { code: "slug_reserved", message: "Slug 'admin' is reserved.", field: "slug" },
+    ),
   },
 });
 
@@ -63,17 +107,34 @@ export const createLinkRoute = createRoute({
  * cannot exist. Answering 400 for `ab` and 404 for `abc` would split one
  * outcome — "no such link" — across two statuses.
  */
-const slugParamSchema = z.object({ slug: z.string() });
+const slugParamSchema = z.object({
+  slug: z.string().meta({
+    description:
+      "The link's slug — the path segment of its short URL. Matched case-sensitively. A slug "
+      + "that could never be valid is a `404` like any other unknown slug, not a `400`: "
+      + "\"no such link\" is one outcome, not two.",
+    example: "aB3xY9k",
+  }),
+});
 
 export const getLinkRoute = createRoute({
   method: "get",
   path: "/v1/links/{slug}",
+  operationId: "getLink",
+  tags: ["Links"],
   summary: "Fetch one link",
+  description:
+    "Returns the link's current configuration. Click counts are **not** included — they live on "
+    + "`GET /v1/links/{slug}/stats`, so this stays a single cheap read.\n\n"
+    + "A deleted link is a `404`, indistinguishable from one that never existed.",
   request: { params: slugParamSchema },
   responses: {
-    200: jsonResponse("The link.", linkResourceSchema),
+    200: jsonResponse("The link as currently configured.", linkResourceSchema, LINK_EXAMPLE),
     ...AUTHENTICATED_ROUTE_ERRORS,
-    404: errorResponse("No such link, or it has been deleted."),
+    404: errorResponse("No such link, or it has been deleted.", {
+      code: "not_found",
+      message: "Resource not found.",
+    }),
   },
 });
 
@@ -122,11 +183,28 @@ function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): v
 export const listLinksRoute = createRoute({
   method: "get",
   path: "/v1/links",
+  operationId: "listLinks",
+  tags: ["Links"],
   summary: "List links",
+  description:
+    "Returns a page of links, newest first, filtered by any combination of `tag`, `active`, "
+    + "`created_after` and `external_id` (all AND-combined). Deleted links never appear.\n\n"
+    + "Pagination is cursor-based: follow `next_cursor` until it is `null`. Cursors are keyset "
+    + "positions, not offsets, so pages do not shift or duplicate rows when links are created "
+    + "while you are paging.\n\n"
+    + "No filter narrows by which key created a link: every key belonging to the account sees "
+    + "every link.",
   request: { query: listLinksQuerySchema },
   responses: {
-    200: jsonResponse("A page of links, newest first, with the next cursor.", linkListSchema),
-    400: errorResponse("Unknown filter, bad value or an unreadable cursor."),
+    200: jsonResponse("A page of links, newest first, with the next cursor.", linkListSchema, {
+      links: [LINK_EXAMPLE],
+      next_cursor: null,
+    }),
+    400: errorResponse("Unknown filter, bad value or an unreadable cursor.", {
+      code: "invalid_request",
+      message: "limit must be a whole number.",
+      field: "limit",
+    }),
     ...AUTHENTICATED_ROUTE_ERRORS,
   },
 });
@@ -182,21 +260,47 @@ function registerListLinksRoute(app: OpenAPIHono<AppEnv>): void {
 export const patchLinkRoute = createRoute({
   method: "patch",
   path: "/v1/links/{slug}",
+  operationId: "updateLink",
+  tags: ["Links"],
   summary: "Update a link",
+  description:
+    "Changes any subset of a link's mutable fields, leaving the rest alone. `tags` replaces the "
+    + "whole set; `expires_at` and `external_id` accept `null` to clear them; `slug` is "
+    + "immutable and rejected as an unknown field.\n\n"
+    + "Re-pointing a link is the common case and takes effect for new visitors immediately at "
+    + "the responding location — but the edge cache is eventually consistent, so distant "
+    + "locations can serve the previous destination for up to about 60 seconds. Links created "
+    + "with `redirect_type: 301` or `308` may be cached by browsers for far longer, which is the "
+    + "trade-off those statuses buy.",
   request: {
     params: slugParamSchema,
     body: {
       required: true,
+      description: "The fields to change. At least one.",
       content: { "application/json": { schema: patchLinkSchema } },
     },
   },
   responses: {
-    200: jsonResponse("The updated link.", linkResourceSchema),
-    400: errorResponse("Empty body, unknown field (including `slug`) or bad value."),
+    200: jsonResponse("The link as it now stands.", linkResourceSchema, {
+      ...LINK_EXAMPLE,
+      destination: "https://clinic.example.com/appt/9182/rescheduled",
+      updated_at: "2026-09-02T09:12:44Z",
+    }),
+    400: errorResponse("Empty body, unknown field (including `slug`) or bad value.", {
+      code: "invalid_request",
+      message: "PATCH body must contain at least one field to update.",
+    }),
     ...AUTHENTICATED_ROUTE_ERRORS,
     ...JSON_BODY_ERRORS,
-    404: errorResponse("No such link, or it has been deleted."),
-    422: errorResponse("The new destination failed validation."),
+    404: errorResponse("No such link, or it has been deleted.", {
+      code: "not_found",
+      message: "Resource not found.",
+    }),
+    422: errorResponse("The new destination failed validation.", {
+      code: "destination_invalid",
+      message: "Destination scheme must be http or https.",
+      field: "destination",
+    }),
   },
 });
 
@@ -274,12 +378,27 @@ function registerPatchLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): vo
 export const deleteLinkRoute = createRoute({
   method: "delete",
   path: "/v1/links/{slug}",
+  operationId: "deleteLink",
+  tags: ["Links"],
   summary: "Delete a link",
+  description:
+    "Retires the link: its short URL stops resolving and begins answering `404`, and it "
+    + "disappears from every read endpoint including its own stats.\n\n"
+    + "The deletion is a **tombstone**, not an erasure — the slug stays permanently reserved, so "
+    + "re-creating it returns `409 slug_taken`. That is deliberate: a short URL already sitting "
+    + "in someone\u2019s inbox can never be taken over and re-pointed at a different destination. "
+    + "There is no undelete; create a new link if you need one.",
   request: { params: slugParamSchema },
   responses: {
-    204: { description: "Tombstoned. No body." },
+    204: {
+      description: "Deleted. The slug remains reserved and the body is empty.",
+      headers: STANDARD_RESPONSE_HEADERS,
+    },
     ...AUTHENTICATED_ROUTE_ERRORS,
-    404: errorResponse("No such link, or it was already deleted."),
+    404: errorResponse("No such link, or it was already deleted.", {
+      code: "not_found",
+      message: "Resource not found.",
+    }),
   },
 });
 
