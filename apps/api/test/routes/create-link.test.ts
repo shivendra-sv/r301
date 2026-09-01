@@ -109,6 +109,24 @@ describe("POST /v1/links (api-contract §POST /v1/links)", () => {
       expect(link.updated_at).toBe(link.created_at);
     });
 
+    // Resolved as PROGRESS question 24: one clock for every route in the file.
+    it("stamps created_at from the injected clock", async () => {
+      const at = 1_790_000_000_000;
+      const res = await createApiApp({ now: () => at }).request(
+        "https://api.r301.dev/v1/links",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders(key.key) },
+          body: JSON.stringify({ destination: "https://example.com/" }),
+        },
+        bindings(),
+      );
+      const link = await res.json<LinkBody>();
+
+      expect(link.created_at).toBe(new Date(at).toISOString());
+      expect(link.updated_at).toBe(link.created_at);
+    });
+
     it("returns the Link resource and nothing else — no counts (D26)", async () => {
       const link = await (await post({ body: { destination: "https://example.com/" } })).json<LinkBody>();
 
@@ -192,6 +210,33 @@ describe("POST /v1/links (api-contract §POST /v1/links)", () => {
         .all<{ name: string }>();
 
       expect(results.map((r) => r.name)).toEqual(["a", "b"]);
+    });
+
+    // Resolved as PROGRESS question 23: PATCH reads the stored set back, and
+    // create echoed the request, so the two disagreed about the same link.
+    it("returns the set as stored, not the array it was handed", async () => {
+      // link_tags is keyed (link_id, tag_id), so a repeated tag stores one row.
+      const link = await (
+        await post({ body: { destination: "https://example.com/", tags: ["x", "x"] } })
+      ).json<LinkBody>();
+
+      expect(link.tags).toEqual(["x"]);
+    });
+
+    it("agrees with what a subsequent GET reports", async () => {
+      const created = await (
+        await post({ body: { destination: "https://example.com/", tags: ["b", "b", "a"] } })
+      ).json<LinkBody>();
+
+      const read = await (
+        await createApiApp().request(
+          `https://api.r301.dev/v1/links/${created.slug}`,
+          { headers: authHeaders(key.key) },
+          bindings(),
+        )
+      ).json<LinkBody>();
+
+      expect(created.tags).toEqual(read.tags);
     });
 
     it("reuses an existing tag row rather than duplicating it", async () => {

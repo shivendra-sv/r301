@@ -85,7 +85,7 @@ function registerGetLinkRoute(app: OpenAPIHono<AppEnv>): void {
   });
 }
 
-function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>): void {
+function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): void {
   app.openapi(createLinkRoute, async (c) => {
     const body = c.req.valid("json");
     const key = c.get("key");
@@ -114,7 +114,7 @@ function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>): void {
       expiresAt: body.expires_at === undefined ? null : Date.parse(body.expires_at),
       externalId: body.external_id ?? null,
       createdByKeyId: key.id,
-      at: Date.now(),
+      at: now(),
     }).catch((err: unknown) => {
       if (isSlugUniqueViolation(err)) {
         throw new ApiError("slug_taken", `Slug '${resolved.slug}' is already in use.`, "slug");
@@ -129,14 +129,18 @@ function registerCreateLinkRoute(app: OpenAPIHono<AppEnv>): void {
 
     // §7.3: implicit creation. Sequential rather than batched because each tag
     // needs its id back before it can be linked.
-    const tags = body.tags ?? [];
-    for (const name of tags) {
+    for (const name of body.tags ?? []) {
       const tag = await upsertTag(c.env.DB, name);
       if (tag === null) {
         throw new Error(`tag upsert produced no row for '${name}'`);
       }
       await attachTag(c.env.DB, row.id, tag.id);
     }
+
+    // Read back rather than echoing `body.tags`, exactly as PATCH does:
+    // `link_tags` is keyed (link_id, tag_id), so `["x","x"]` stores one row and
+    // an echo would report a set the next GET disagrees with (question 23).
+    const tags = (await findTagNamesForLinks(c.env.DB, [row.id])).get(row.id) ?? [];
 
     // D20: D1 has committed; the KV put is awaited, so its failure is the
     // request's failure. The row stays behind on purpose — an idempotent
@@ -339,7 +343,7 @@ function registerDeleteLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): v
  * by a failing test in prompts 15 and 16.
  */
 export interface LinkRoutesOptions {
-  /** Clock for `updated_at`. Injected in tests. */
+  /** Clock for `created_at`/`updated_at`, shared by every route here. Injected in tests. */
   now?: () => number;
 }
 
@@ -347,10 +351,11 @@ export function registerLinkRoutes(
   app: OpenAPIHono<AppEnv>,
   options: LinkRoutesOptions = {},
 ): void {
-  registerCreateLinkRoute(app);
+  const now = options.now ?? (() => Date.now());
+
+  registerCreateLinkRoute(app, now);
   registerListLinksRoute(app);
   registerGetLinkRoute(app);
-  const now = options.now ?? (() => Date.now());
   registerPatchLinkRoute(app, now);
   registerDeleteLinkRoute(app, now);
 
