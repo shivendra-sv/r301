@@ -3,6 +3,7 @@ import { z } from "@hono/zod-openapi";
 import { batchCreateSchema } from "../../src/schemas/batch-create";
 import { createLinkSchema } from "../../src/schemas/create-link";
 import { listLinksQuerySchema } from "../../src/schemas/list-query";
+import { tagStatsQuerySchema } from "../../src/schemas/stats-query";
 import { patchLinkSchema } from "../../src/schemas/patch-link";
 
 const SCHEMAS = {
@@ -10,6 +11,7 @@ const SCHEMAS = {
   batchCreateSchema,
   patchLinkSchema,
   listLinksQuerySchema,
+  tagStatsQuerySchema,
 } as const;
 
 /**

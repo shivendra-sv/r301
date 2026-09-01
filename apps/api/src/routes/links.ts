@@ -20,6 +20,7 @@ import { decodeCursor, encodeCursor } from "../services/cursor";
 import { createLink } from "../services/links";
 import type { AppEnv } from "../types";
 import { registerBatchCreateRoute } from "./batch";
+import { registerLinkStatsRoute } from "./stats";
 
 /**
  * Declared with `createRoute` so the OpenAPI document accrues as routes land
@@ -321,6 +322,12 @@ export function registerLinkRoutes(
   // Before the `:slug` family and its 405 guard — see (2) above.
   registerBatchCreateRoute(app, now);
   methodNotAllowed(app, "/v1/links/batch");
+
+  // Three segments deep, so `/v1/links/:slug` (two) cannot match it and the
+  // order is not load-bearing the way batch's is — registered here anyway so
+  // the whole `/v1/links…` family stays in one readable sequence.
+  registerLinkStatsRoute(app);
+  methodNotAllowed(app, "/v1/links/:slug/stats");
 
   registerGetLinkRoute(app);
   registerPatchLinkRoute(app, now);

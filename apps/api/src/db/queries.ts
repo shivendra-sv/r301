@@ -303,3 +303,59 @@ export async function listLinks(db: D1Database, p: ListLinksParams): Promise<Lin
 export function findLinkBySlug(db: D1Database, slug: string): Promise<LinkRow | null> {
   return db.prepare("SELECT * FROM links WHERE slug = ?1").bind(slug).first<LinkRow>();
 }
+
+export interface TagAggregate {
+  link_count: number;
+  click_count: number;
+}
+
+/**
+ * §7.4's per-tag aggregate. An unknown tag is not an error here — it simply
+ * joins nothing, and `COUNT`/`COALESCE(SUM)` render that as zeros, which is
+ * what the api-contract asks for (a tag that never existed aggregates nothing).
+ *
+ * `deleted_at IS NULL` is written out rather than inherited from a helper:
+ * tombstoned links keep their `link_tags` rows (nothing detaches them on
+ * delete), so without this filter a deleted link would still be counted (D15).
+ */
+export async function aggregateTagStats(db: D1Database, tag: string): Promise<TagAggregate> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(l.id) AS link_count, COALESCE(SUM(l.click_count), 0) AS click_count
+         FROM links l
+         JOIN link_tags lt ON lt.link_id = l.id
+         JOIN tags t ON t.id = lt.tag_id
+        WHERE t.name = ?1 AND l.deleted_at IS NULL`,
+    )
+    .bind(tag)
+    .first<TagAggregate>();
+
+  // The aggregate is one row by construction; the fallback only satisfies the
+  // nullable return type.
+  return row ?? { link_count: 0, click_count: 0 };
+}
+
+export interface TagCount {
+  name: string;
+  link_count: number;
+}
+
+/**
+ * §7.3's tag list, unpaginated in v1 (D26.6). LEFT JOIN, not JOIN: a tag whose
+ * only link has been tombstoned still has a `tags` row — nothing prunes it
+ * (D15) — so it must list with `link_count: 0` rather than disappear.
+ */
+export async function listTagCounts(db: D1Database): Promise<TagCount[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT t.name AS name, COUNT(l.id) AS link_count
+         FROM tags t
+         LEFT JOIN link_tags lt ON lt.tag_id = t.id
+         LEFT JOIN links l ON l.id = lt.link_id AND l.deleted_at IS NULL
+        GROUP BY t.id, t.name
+        ORDER BY t.name`,
+    )
+    .all<TagCount>();
+
+  return results;
+}

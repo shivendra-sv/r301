@@ -39,7 +39,11 @@ export function redirectBaseUrl(environment: string): string {
   return base;
 }
 
-function isoOrNull(epochMs: number | null): string | null {
+/**
+ * Shared with the stats serializer: the api-contract's timestamp convention is
+ * one rule ("ISO 8601 UTC, null when unset"), so it gets one implementation.
+ */
+export function isoOrNull(epochMs: number | null): string | null {
   return epochMs === null ? null : new Date(epochMs).toISOString();
 }
 

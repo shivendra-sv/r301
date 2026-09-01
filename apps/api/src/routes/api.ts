@@ -1,12 +1,14 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createAuthMiddleware } from "../middleware/auth";
-import { createErrorHandler, notFoundHandler } from "../middleware/errors";
+import { createErrorHandler, methodNotAllowed, notFoundHandler } from "../middleware/errors";
 import { createIdempotencyMiddleware } from "../middleware/idempotency";
 import { jsonBody } from "../middleware/json-body";
 import { requestLog } from "../middleware/request-log";
 import { requestId } from "../middleware/request-id";
 import { registerHealthRoute } from "./health";
 import { registerLinkRoutes } from "./links";
+import { registerTagStatsRoute } from "./stats";
+import { registerTagsRoute } from "./tags";
 import { apiErrorFromZod } from "../schemas/fields";
 import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
@@ -55,6 +57,12 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
   app.use("/v1/links", idempotency);
   app.use("/v1/links/batch", idempotency);
   registerLinkRoutes(app, options.now === undefined ? {} : { now: options.now });
+
+  registerTagStatsRoute(app);
+  methodNotAllowed(app, "/v1/stats");
+
+  registerTagsRoute(app);
+  methodNotAllowed(app, "/v1/tags");
 
   app.onError(createErrorHandler(options.reportError ?? reportError));
   app.notFound(notFoundHandler);
