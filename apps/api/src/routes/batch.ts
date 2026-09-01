@@ -79,7 +79,11 @@ function unexpectedItem(index: number): BatchItem {
   };
 }
 
-export function registerBatchCreateRoute(app: OpenAPIHono<AppEnv>, now: () => number): void {
+export function registerBatchCreateRoute(
+  app: OpenAPIHono<AppEnv>,
+  now: () => number,
+  report: (err: unknown) => void,
+): void {
   app.openapi(batchCreateRoute, async (c) => {
     const { links } = c.req.valid("json");
     const key = c.get("key");
@@ -90,6 +94,8 @@ export function registerBatchCreateRoute(app: OpenAPIHono<AppEnv>, now: () => nu
     }
 
     const items: BatchItem[] = [];
+    /** Indices whose failure was *not* a contracted outcome — question 26. */
+    const unexpected: number[] = [];
 
     // Sequential, not parallel (§7.2, D22): D1's `batch()` is a transaction
     // that aborts on the first error, which is the opposite of per-item
@@ -117,8 +123,32 @@ export function registerBatchCreateRoute(app: OpenAPIHono<AppEnv>, now: () => nu
           }),
         });
       } catch (err) {
-        items.push(err instanceof ApiError ? errorItem(index, err) : unexpectedItem(index));
+        if (err instanceof ApiError) {
+          items.push(errorItem(index, err));
+        } else {
+          unexpected.push(index);
+          items.push(unexpectedItem(index));
+        }
       }
+    }
+
+    // One report for the whole batch, not one per item: a 100-item send during
+    // a KV outage should raise a single incident, not flood the quota at the
+    // exact moment it is needed. §15's durable forensics are Sentry + D1, and a
+    // batch answers 200 — so without this, `app.onError` never runs and these
+    // failures reach nobody at all (question 26).
+    //
+    // Synthetic on purpose: the scrubber (D23) cleans `request`, `extra`,
+    // `contexts` and breadcrumbs, but **not** an exception's own message, so the
+    // original error is never passed through — its text is not ours to vouch
+    // for. Counts and indices carry no destination, body or key.
+    if (unexpected.length > 0) {
+      report(
+        new Error(
+          `POST /v1/links/batch: ${unexpected.length} of ${items.length} item(s) ` +
+            `failed unexpectedly (indices ${unexpected.join(", ")})`,
+        ),
+      );
     }
 
     const created = items.filter((item) => item.status === "created").length;

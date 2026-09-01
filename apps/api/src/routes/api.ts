@@ -58,7 +58,14 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
   for (const path of IDEMPOTENT_PATHS) {
     app.use(path, idempotency);
   }
-  registerLinkRoutes(app, options.now === undefined ? {} : { now: options.now });
+  // Resolved once and shared: the error handler and the batch route must report
+  // through the same channel, or a batch's failures would land somewhere else.
+  const report = options.reportError ?? reportError;
+
+  registerLinkRoutes(app, {
+    ...(options.now === undefined ? {} : { now: options.now }),
+    reportError: report,
+  });
 
   registerTagStatsRoute(app);
   methodNotAllowed(app, "/v1/stats");
@@ -71,7 +78,7 @@ export function createApiApp(options: ApiAppOptions = {}): OpenAPIHono<AppEnv> {
   // path, and no `security` is attached to the operation.
   registerOpenApiRoute(app);
 
-  app.onError(createErrorHandler(options.reportError ?? reportError));
+  app.onError(createErrorHandler(report));
   app.notFound(notFoundHandler);
 
   return app;

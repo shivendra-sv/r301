@@ -49,6 +49,11 @@ export function errorResponse(description: string): {
  */
 export const PUBLIC_ROUTE_ERRORS = {
   405: errorResponse("The method is not allowed on this route."),
+  // Declared everywhere, not just on the write paths the api-contract names:
+  // any operation can fail unexpectedly, and D20 returns this specific status
+  // when the awaited KV write fails (retry with the same Idempotency-Key — it
+  // converges). PROGRESS question 28.
+  500: errorResponse("An unexpected error occurred."),
 } as const;
 
 export const AUTHENTICATED_ROUTE_ERRORS = {

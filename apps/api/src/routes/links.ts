@@ -24,6 +24,7 @@ import { jsonResponse, linkListSchema, linkResourceSchema } from "../schemas/res
 import { serializeLink } from "../serializers/link";
 import { decodeCursor, encodeCursor } from "../services/cursor";
 import { createLink } from "../services/links";
+import { reportError } from "../telemetry/sentry";
 import type { AppEnv } from "../types";
 import { registerBatchCreateRoute } from "./batch";
 import { registerLinkStatsRoute } from "./stats";
@@ -319,6 +320,12 @@ function registerDeleteLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): v
 export interface LinkRoutesOptions {
   /** Clock for `created_at`/`updated_at`, shared by every route here. Injected in tests. */
   now?: () => number;
+  /**
+   * Where batch sends its aggregated report of unexpected item failures
+   * (question 26). Every other route reaches Sentry through `app.onError`;
+   * batch cannot, because it answers 200.
+   */
+  reportError?: (err: unknown) => void;
 }
 
 export function registerLinkRoutes(
@@ -331,7 +338,7 @@ export function registerLinkRoutes(
   registerListLinksRoute(app);
 
   // Before the `:slug` family and its 405 guard — see (2) above.
-  registerBatchCreateRoute(app, now);
+  registerBatchCreateRoute(app, now, options.reportError ?? reportError);
   methodNotAllowed(app, "/v1/links/batch");
 
   // Three segments deep, so `/v1/links/:slug` (two) cannot match it and the

@@ -435,3 +435,91 @@ describe("POST /v1/links/batch (api-contract §batch, PRD §7.2)", () => {
     });
   });
 });
+
+/**
+ * Question 26, resolved 1 Sep 2026: a per-item `internal` failure used to reach
+ * nobody. The batch answers 200, so `app.onError` never runs and Sentry never
+ * hears about it — an infra wobble during a 100-item send was visible only to
+ * the caller. One aggregated report per batch closes that without turning a
+ * 100-item outage into 100 Sentry events.
+ */
+describe("unexpected item failures are reported once per batch (question 26)", () => {
+  function kvFailingOnPut(...failing: number[]): Env {
+    let puts = 0;
+
+    return bindings({
+      REDIRECTS: {
+        ...testEnv.REDIRECTS,
+        put: (slug: string, value: string) => {
+          puts += 1;
+
+          return failing.includes(puts)
+            ? Promise.reject(new Error("KV unavailable"))
+            : testEnv.REDIRECTS.put(slug, value);
+        },
+      } as unknown as KVNamespace,
+    });
+  }
+
+  const body = {
+    links: [
+      { destination: "https://example.com/1" },
+      { destination: "https://example.com/2" },
+      { destination: "https://example.com/3" },
+    ],
+  };
+
+  it("reports exactly once, however many items failed", async () => {
+    const reported: unknown[] = [];
+
+    await post({ body, env: kvFailingOnPut(1, 2, 3), reportError: (e) => reported.push(e) });
+
+    expect(reported).toHaveLength(1);
+  });
+
+  it("names the count and the failing indices", async () => {
+    const reported: unknown[] = [];
+
+    await post({ body, env: kvFailingOnPut(2, 3), reportError: (e) => reported.push(e) });
+
+    const message = (reported[0] as Error).message;
+    expect(message).toContain("2");
+    expect(message).toContain("1, 2");
+  });
+
+  /**
+   * D23 is a hard rule and the scrubber does **not** reach an exception's own
+   * message — it cleans `request`, `extra`, `contexts` and breadcrumbs. So the
+   * report is synthetic: counts and indices only, never the original error,
+   * whose text is not ours to vouch for.
+   */
+  it("never carries the destination or the original error text", async () => {
+    const reported: unknown[] = [];
+
+    await post({ body, env: kvFailingOnPut(1), reportError: (e) => reported.push(e) });
+
+    const message = (reported[0] as Error).message;
+    expect(message).not.toContain("example.com");
+    expect(message).not.toContain("KV unavailable");
+  });
+
+  it("stays silent when every item succeeds", async () => {
+    const reported: unknown[] = [];
+
+    await post({ body, reportError: (e) => reported.push(e) });
+
+    expect(reported).toEqual([]);
+  });
+
+  // A slug_taken or a bad destination is a contracted outcome, not an incident.
+  it("stays silent for ordinary per-item errors", async () => {
+    const reported: unknown[] = [];
+
+    await post({
+      body: { links: [{ destination: "javascript:alert(1)" }, { destination: "https://ok.example.com/" }] },
+      reportError: (e) => reported.push(e),
+    });
+
+    expect(reported).toEqual([]);
+  });
+});

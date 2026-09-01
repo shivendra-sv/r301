@@ -350,3 +350,35 @@ describe("idempotency is documented wherever it is enforced", () => {
     expect(post?.responses["409"]).toBeDefined();
   });
 });
+
+/**
+ * Question 28, resolved 1 Sep 2026: `500` is defined in the api-contract and
+ * reachable on every operation (D20 returns it when the awaited KV write
+ * fails), so the document declares it everywhere rather than on writes only.
+ */
+describe("500 is declared on every operation (question 28)", () => {
+  it("leaves no operation silent about internal failure", async () => {
+    const doc = await (await fetchDoc()).json<OpenApiDocument>();
+    const missing: string[] = [];
+
+    for (const [path, operations] of Object.entries(doc.paths)) {
+      for (const [method, operation] of Object.entries(operations)) {
+        const responses = (operation as { responses: Record<string, unknown> }).responses;
+        if (responses["500"] === undefined) missing.push(`${method.toUpperCase()} ${path}`);
+      }
+    }
+
+    expect(missing).toEqual([]);
+  });
+
+  it("references the shared envelope for it", async () => {
+    const doc = await (await fetchDoc()).json<OpenApiDocument>();
+    const internal = (doc.paths["/v1/tags"]?.["get"] as {
+      responses: Record<string, { content?: { "application/json"?: { schema?: { $ref?: string } } } }>;
+    }).responses["500"];
+
+    expect(internal?.content?.["application/json"]?.schema?.$ref).toBe(
+      "#/components/schemas/ErrorEnvelope",
+    );
+  });
+});
