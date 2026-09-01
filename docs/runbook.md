@@ -37,26 +37,28 @@ pnpm dlx wrangler@latest kv namespace create REDIRECTS --env production
 - [x] Paste each printed `id` into the matching `<paste: runbook A4>` slot.
 
 ### A5 · Sentry (PRD §13, §15)
-- [ ] Create a Sentry project (platform: Cloudflare Workers), name `r301-api`. Copy the DSN.
-- [ ] Set it as the only Worker secret (D14 — there is no ADMIN_TOKEN), once per env. Wrangler may offer to create a draft Worker — accept:
+- [x] Create a Sentry project (platform: Cloudflare Workers), name `r301-api`. Copy the DSN.
+- [x] Set it as the only Worker secret (D14 — there is no ADMIN_TOKEN), once per env. Wrangler may offer to create a draft Worker — accept:
 ```bash
 cd apps/api
 pnpm dlx wrangler@latest secret put SENTRY_DSN --env staging
 pnpm dlx wrangler@latest secret put SENTRY_DSN --env production
 ```
+  - Verified 1 Sep 2026: `wrangler secret list --env staging` and `--env production` both report `SENTRY_DSN`. Re-check with those two commands — they print names only, never values.
 
 ### A6 · GitHub repo + Actions secrets (PRD §14)
-- [ ] Create the repo and push `main`:
+- [x] Create the repo and push `main`:
 ```bash
 gh repo create r301 --private --source . --push
 ```
-- [ ] Create a **least-privilege** Cloudflare API token (Dashboard → My Profile → API Tokens → Create): start from "Edit Cloudflare Workers", ensure it includes **Account · Workers Scripts: Edit**, **Account · D1: Edit**, **Account · Workers KV Storage: Edit**, **Zone · Workers Routes: Edit** scoped to `r301.dev`.
-- [ ] Grab the Account ID (Dashboard → Workers & Pages → right sidebar).
-- [ ] Add both as Actions secrets:
+- [x] Create a **least-privilege** Cloudflare API token (Dashboard → My Profile → API Tokens → Create): start from "Edit Cloudflare Workers", ensure it includes **Account · Workers Scripts: Edit**, **Account · D1: Edit**, **Account · Workers KV Storage: Edit**, **Zone · Workers Routes: Edit** scoped to `r301.dev`.
+- [x] Grab the Account ID (Dashboard → Workers & Pages → right sidebar).
+- [x] Add both as Actions secrets:
 ```bash
 gh secret set CLOUDFLARE_API_TOKEN
 gh secret set CLOUDFLARE_ACCOUNT_ID
 ```
+  - Verified 1 Sep 2026 via `gh secret list`: both present since 31 Aug. Repo is `shivendra-sv/r301` (private, default branch `main`).
 
 ### A7 · Zone rate-limiting rule (D24 — day one)
 - [ ] Dashboard → `r301.dev` → Security → WAF → Rate limiting rules → Create (free plan includes 1 rule):
@@ -64,18 +66,43 @@ gh secret set CLOUDFLARE_ACCOUNT_ID
 
 ### A8 · Notifications + verification (D25, §15)
 - [ ] Dashboard → Notifications: enable Workers free-tier usage alerts (and, if/when on Workers Paid, a billing threshold alert at **$8**).
-- [ ] Verify the actual D1 Time Travel window on the free tier and record the answer in PROGRESS.md notes (PRD §11 assumes it may be 7 d, not 30):
+- [ ] Verify the actual D1 Time Travel window on the free tier and record the answer in PROGRESS.md notes (PRD §11 assumes it may be 7 d, not 30).
+  **`time-travel info` with no arguments cannot answer this** — it prints the *current* bookmark, not the retention window (checked 1 Sep 2026; `d1 info` does not report it either). Probe the window instead, which is read-only — `info` retrieves a bookmark, only `restore` would change anything:
 ```bash
 cd apps/api
-pnpm dlx wrangler@latest d1 time-travel info r301-production
+# Ask for a bookmark ~8 days back. A bookmark returned ⇒ the window reaches at
+# least that far. An error (`code: 7500`) ⇒ it does not.
+pnpm dlx wrangler@latest d1 time-travel info r301-production --timestamp=$(date -u -v-8d +%Y-%m-%dT%H:%M:%SZ)
 ```
+  - ⚠️ **Only meaningful once the database is older than the window you are probing.** Both databases were created 31 Aug 2026, so an 8-day probe returns the same error for "outside the window" and "before the database existed". Re-run this **on or after ~8 Sep 2026** and record the answer then.
 
 ## Phase B — after CI first deploys staging (≈ end of M0)
 
-- [ ] Confirm staging is live: `curl https://api-staging.r301.dev/v1/health` → `{"status":"ok",…}`.
-- [ ] Confirm the redirect host answers: `curl -I https://staging.r301.dev/robots.txt`.
+Both checks must assert something **only our Worker can produce**. Before the first deploy, `api-staging.r301.dev` returns `522` (proxied DNS, no origin) — but the redirect host does **not** fail as obviously, which is the trap below.
+
+- [ ] API host is live and is the *staging* build:
+```bash
+curl -s https://api-staging.r301.dev/v1/health | jq -e '.status == "ok" and .env == "staging"'
+```
+- [ ] Redirect host is served by our Worker:
+```bash
+# X-Request-Id is stamped on every response by our request-id middleware.
+curl -sS -D - -o /dev/null https://staging.r301.dev/robots.txt | grep -i '^x-request-id:'
+# And our robots.txt disallows crawling; Cloudflare's does not.
+curl -sS https://staging.r301.dev/robots.txt | grep -q 'Disallow: /' && echo "worker robots.txt OK"
+```
+  - ⚠️ **Do not use a bare `curl -I …/robots.txt` as the check.** Verified 1 Sep 2026 with nothing deployed: it returns **200** — Cloudflare serves its own content-signals `robots.txt` at the zone edge, so the original check passed while the Worker did not exist. The two assertions above are what distinguish them.
 
 ## Phase C — after the mint-key script exists (prompt-numbered in PROGRESS.md)
+
+**Prerequisite, and the reason this phase can look broken:** `mint-key --env staging|production` writes an `api_keys` row to the **remote** D1, so the schema has to be there first. Migrations are normally applied by the deploy workflow — which means the naive order (push → deploy → mint) deadlocks: the deploy's smoke step needs a key that cannot be minted until the deploy has run. Break it by applying migrations by hand once, before minting:
+
+```bash
+cd apps/api
+pnpm --filter @r301/api exec wrangler d1 migrations apply DB --env staging --remote
+pnpm --filter @r301/api exec wrangler d1 migrations apply DB --env production --remote
+```
+- [x] Done 1 Sep 2026 — both remote databases now hold the full `0001_init` schema (`links`, `tags`, `link_tags`, `api_keys`, `idempotency_keys`). Re-running is safe: migrations are forward-only and the tracker table skips what is applied.
 
 - [ ] Mint CI smoke keys (one per env) and store them for Actions:
 ```bash
