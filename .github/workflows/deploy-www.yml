@@ -1,0 +1,48 @@
+# www: the marketing site at www.r301.dev (ADR D29). Cloudflare Pages, direct
+# upload — this hostname is a **Pages custom domain**, never a Worker route, and
+# must never appear in apps/api/wrangler.toml: a Workers route on the same
+# hostname shadows the Pages domain and takes the site down.
+#
+# Manual trigger, matching deploy-staging/deploy-production (PROGRESS deviation
+# 6, 1 Sep 2026): a merge to `main` ships nothing. Run it from Actions → Deploy
+# www → Run workflow.
+#
+# No `pnpm test` / `pnpm typecheck` here, deliberately. Those cover @r301/api;
+# this workflow ships static HTML from apps/www, which has no test surface.
+# Gating a copy fix on an unrelated red API suite would buy nothing.
+name: Deploy www
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deploy-www
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Deploy to Cloudflare Pages (direct upload)
+        # wrangler is a devDependency of @r301/api only — invoked cross-package so
+        # this deploy uses the same pinned version as the Worker deploys, rather
+        # than adding a dependency to @r301/www (which has none) or resolving an
+        # unpinned wrangler at run time.
+        #
+        # --branch must match the Pages project's production branch, or a direct
+        # upload lands as a *preview* deployment and www.r301.dev never updates.
+        run: >-
+          pnpm --filter @r301/api exec wrangler pages deploy apps/www
+          --project-name=<paste: runbook W1>
+          --branch=main

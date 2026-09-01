@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r301.dev — an API-first URL shortener at the edge</title>
+<meta name="description" content="r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://www.r301.dev/">
+<link rel="stylesheet" href="/styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="r301.dev">
+<meta property="og:url" content="https://www.r301.dev/">
+<meta property="og:title" content="r301.dev — an API-first URL shortener at the edge">
+<meta property="og:description" content="r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="r301.dev — an API-first URL shortener at the edge">
+<meta name="twitter:description" content="r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.">
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<div class="rail" aria-hidden="true">
+  <span class="rail__mark"></span>
+  <span class="rail__text">301 · Moved Permanently</span>
+</div>
+
+<div class="shell">
+
+  <header class="masthead">
+    <a class="wordmark" href="/" aria-label="r301.dev home">
+      <span class="wordmark__r">r</span><span class="wordmark__n">301</span><span class="wordmark__tld">.dev</span>
+    </a>
+    <p class="masthead__meta">Edge&nbsp;redirects · Cloudflare&nbsp;Workers</p>
+  </header>
+
+  <main id="main">
+
+    <section class="hero" aria-labelledby="hero-title">
+
+      <p class="badge" data-reveal style="--i:0">
+        <span class="badge__dot" aria-hidden="true"></span>
+        <span class="badge__text">Private beta — access by request</span>
+      </p>
+
+      <h1 class="hero__title" id="hero-title" data-reveal style="--i:1">
+        Short links you<br>
+        <em>POST</em> instead of<br>
+        <span class="hero__strike">click&nbsp;together.</span>
+      </h1>
+
+      <div class="hero__body">
+        <p class="lede" data-reveal style="--i:2">
+          r301.dev is a URL shortener with no dashboard. Links are created,
+          updated and retired through a single REST API, and the redirect itself
+          is served from Cloudflare's edge — in the same datacenter as the
+          person who clicked it.
+        </p>
+        <p class="sub" data-reveal style="--i:3">
+          The API <em>is</em> the product. Nothing here needs a human in a browser,
+          which is exactly the point when your links are minted by a booking
+          confirmation, a billing job, or a message queue.
+        </p>
+
+        <div class="cta-row" data-reveal style="--i:4">
+          <a class="cta cta--primary"
+             href="https://registry.scalar.com/@r301/apis/r301dev-api"
+             target="_blank" rel="noopener noreferrer">
+            <span>API playground &amp; docs</span>
+            <svg class="cta__icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M5.5 3h7.5v7.5M13 3 3.2 12.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="visually-hidden">(opens in a new tab)</span>
+          </a>
+          <a class="cta cta--ghost"
+             href="mailto:mail@r301.dev?subject=r301.dev%20API%20key%20request&amp;body=Name%3A%0ACompany%3A%0AWhat%20you%27re%20building%3A%0AExpected%20volume%20%28links%20per%20month%29%3A%0A">
+            <span>Request an API key</span>
+            <span class="cta__hint" aria-hidden="true">mail@r301.dev</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="proof" aria-labelledby="proof-title">
+      <div class="proof__head">
+        <h2 class="proof__title" id="proof-title">One call, one link.</h2>
+        <p class="proof__note">Live shapes from the v1 contract — no SDK required.</p>
+      </div>
+
+      <div class="terminal" data-reveal style="--i:5">
+        <div class="terminal__bar">
+          <span class="terminal__label">POST /v1/links</span>
+          <span class="terminal__host">api.r301.dev</span>
+        </div>
+
+        <div class="terminal__pane">
+          <pre class="code"><code><span class="t-cmd">curl</span> <span class="t-flag">-X</span> POST https://api.r301.dev/v1/links \
+  <span class="t-flag">-H</span> <span class="t-str">"Authorization: Bearer r301_live_ExampleKeyNotARealSecret00000000"</span> \
+  <span class="t-flag">-H</span> <span class="t-str">"Content-Type: application/json"</span> \
+  <span class="t-flag">-d</span> <span class="t-str">'{
+    "destination": "https://example.com/welcome?ref=autumn",
+    "slug": "welcome",
+    "redirect_type": 302,
+    "tags": ["kind:onboarding"],
+    "external_id": "signup_4471"
+  }'</span></code></pre>
+        </div>
+
+        <div class="terminal__divider" role="presentation">
+          <span class="status status--ok">201 Created</span>
+          <span class="terminal__divider-rule"></span>
+          <span class="terminal__timing">application/json</span>
+        </div>
+
+        <div class="terminal__pane terminal__pane--response">
+          <pre class="code"><code><span class="t-punct">{</span>
+  <span class="t-key">"slug"</span><span class="t-punct">:</span> <span class="t-str">"welcome"</span><span class="t-punct">,</span>
+  <span class="t-key">"short_url"</span><span class="t-punct">:</span> <span class="t-str">"https://r301.dev/welcome"</span><span class="t-punct">,</span>
+  <span class="t-key">"destination"</span><span class="t-punct">:</span> <span class="t-str">"https://example.com/welcome?ref=autumn"</span><span class="t-punct">,</span>
+  <span class="t-key">"redirect_type"</span><span class="t-punct">:</span> <span class="t-num">302</span><span class="t-punct">,</span>
+  <span class="t-key">"is_active"</span><span class="t-punct">:</span> <span class="t-bool">true</span><span class="t-punct">,</span>
+  <span class="t-key">"expires_at"</span><span class="t-punct">:</span> <span class="t-null">null</span><span class="t-punct">,</span>
+  <span class="t-key">"tags"</span><span class="t-punct">:</span> <span class="t-punct">[</span><span class="t-str">"kind:onboarding"</span><span class="t-punct">],</span>
+  <span class="t-key">"external_id"</span><span class="t-punct">:</span> <span class="t-str">"signup_4471"</span><span class="t-punct">,</span>
+  <span class="t-key">"created_at"</span><span class="t-punct">:</span> <span class="t-str">"2026-09-02T10:24:03Z"</span><span class="t-punct">,</span>
+  <span class="t-key">"updated_at"</span><span class="t-punct">:</span> <span class="t-str">"2026-09-02T10:24:03Z"</span>
+<span class="t-punct">}</span><span class="caret" aria-hidden="true"></span></code></pre>
+        </div>
+      </div>
+
+      <p class="proof__foot">
+        <code>redirect_type</code> defaults to <code>302</code>. <code>tags</code> and
+        <code>external_id</code> are yours to key on later — filter a list by tenant,
+        or look a link up by the record that created it.
+      </p>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p class="footer__domain">r301.dev</p>
+    <a class="footer__link"
+       href="https://registry.scalar.com/@r301/apis/r301dev-api"
+       target="_blank" rel="noopener noreferrer">API documentation</a>
+    <p class="footer__copy">© 2026 r301.dev</p>
+  </footer>
+
+</div>
+
+</body>
+</html>

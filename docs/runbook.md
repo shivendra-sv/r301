@@ -130,3 +130,14 @@ curl -s -X POST https://api.r301.dev/v1/links \
 - [ ] UptimeRobot: monitor 2 — keyword monitor on `https://api.r301.dev/v1/health`, keyword `ok`, 60 s interval.
 - [ ] Point alerts at email (+ Telegram integration if wanted).
 - [ ] Optional: GitHub branch protection on `main` (require CI green before merge).
+
+## Phase W — the marketing site (out-of-band; not part of the PRD prompt chain)
+
+### W1 · Pages project for `www.r301.dev`
+
+Per **ADR D29** `www.r301.dev` is a Cloudflare **Pages custom domain**, not a Worker route — it must never appear in `apps/api/wrangler.toml`. Deploys run from Actions → *Deploy www* → Run workflow (`.github/workflows/deploy-www.yml`).
+
+- [ ] Create the Pages project (Dashboard → Workers & Pages → Create → Pages → **Direct Upload**). Note the project name and paste it into `deploy-www.yml`, replacing the literal `<paste: runbook W1>` in the `--project-name=` flag.
+- [ ] Attach `www.r301.dev` as the custom domain. Per D29 the static site was already moved to this hostname on 31 Aug 2026 — if it still sits on an existing Pages project, **reuse that project rather than creating a duplicate** (two projects cannot hold the same custom domain).
+- [ ] **Add `Account · Cloudflare Pages: Edit` to the existing `CLOUDFLARE_API_TOKEN`** (Dashboard → My Profile → API Tokens → edit the token from A6). A6 minted it with Workers Scripts / D1 / KV / Zone-Routes scopes only, so **the first deploy will fail with a 403 until this scope is added.** No new secret is needed — the same token and `CLOUDFLARE_ACCOUNT_ID` are reused.
+- [ ] Confirm the project's **production branch is `main`** (Settings → Builds & deployments). The workflow passes `--branch=main`; if it does not match, direct uploads land as *preview* deployments and `www.r301.dev` never updates.

@@ -1,0 +1,6 @@
+{
+  "name": "@r301/www",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Static marketing site for www.r301.dev — hand-written HTML/CSS, no build step."
+}
