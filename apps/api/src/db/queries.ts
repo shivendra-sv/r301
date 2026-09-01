@@ -144,6 +144,32 @@ export function updateLink(
 }
 
 /**
+ * D15's soft delete: the row stays and `deleted_at` marks it, because
+ * `UNIQUE(slug)` spans tombstones and that is what blocks slug reuse until the
+ * P1 purge cron.
+ *
+ * Matching on the slug directly makes this one statement rather than a
+ * read-then-write, so there is no window for a concurrent delete to slip
+ * through. `AND deleted_at IS NULL` also gives the contract's semantics for
+ * free: unknown and already-tombstoned both match nothing, `RETURNING` yields
+ * nothing, and the route renders the same 404 for both.
+ */
+export function tombstoneLinkBySlug(
+  db: D1Database,
+  slug: string,
+  at: number,
+): Promise<{ id: number } | null> {
+  return db
+    .prepare(
+      `UPDATE links SET deleted_at = ?2
+        WHERE slug = ?1 AND deleted_at IS NULL
+        RETURNING id`,
+    )
+    .bind(slug, at)
+    .first<{ id: number }>();
+}
+
+/**
  * Clears a link's tag set so the caller can re-attach it (D26.5: `tags`
  * replaces rather than merges). The `tags` rows themselves are left alone —
  * v1 does not prune orphans, and the next link to use the name reuses the row.

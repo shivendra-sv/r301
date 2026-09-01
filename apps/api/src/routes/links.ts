@@ -6,11 +6,12 @@ import {
   findTagNamesForLinks,
   insertLink,
   listLinks,
+  tombstoneLinkBySlug,
   updateLink,
   upsertTag,
 } from "../db/queries";
 import { ApiError } from "../errors";
-import { putRedirect, redirectEntryFor } from "../kv/redirects-cache";
+import { putRedirect, redirectEntryFor, removeRedirect } from "../kv/redirects-cache";
 import { methodNotAllowed } from "../middleware/errors";
 import { createLinkSchema } from "../schemas/create-link";
 import { listLinksQuerySchema } from "../schemas/list-query";
@@ -298,6 +299,37 @@ function registerPatchLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): vo
   });
 }
 
+export const deleteLinkRoute = createRoute({
+  method: "delete",
+  path: "/v1/links/{slug}",
+  summary: "Delete a link",
+  request: { params: slugParamSchema },
+  responses: {
+    204: { description: "Tombstoned. No body." },
+    401: { description: "Missing or invalid API key." },
+    404: { description: "No such link, or it was already deleted." },
+  },
+});
+
+function registerDeleteLinkRoute(app: OpenAPIHono<AppEnv>, now: () => number): void {
+  app.openapi(deleteLinkRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    const tombstoned = await tombstoneLinkBySlug(c.env.DB, slug, now());
+
+    if (tombstoned === null) {
+      throw new ApiError("not_found", "Resource not found.");
+    }
+
+    // D20, and a *delete* rather than a put with `a:0`: a deactivated link is
+    // still resolvable, a tombstoned one must leave KV unset so the redirect
+    // path falls through to D1 and 404s without backfilling (design §3's
+    // no-negative-caching rule). Awaited, so a failure is the request's.
+    await removeRedirect(c.env.REDIRECTS, slug);
+
+    return c.body(null, 204);
+  });
+}
+
 /**
  * Every `/v1/links…` handler, in the one order that works: `methodNotAllowed`
  * registers `app.all(path)`, and Hono matches in registration order, so both
@@ -318,7 +350,9 @@ export function registerLinkRoutes(
   registerCreateLinkRoute(app);
   registerListLinksRoute(app);
   registerGetLinkRoute(app);
-  registerPatchLinkRoute(app, options.now ?? (() => Date.now()));
+  const now = options.now ?? (() => Date.now());
+  registerPatchLinkRoute(app, now);
+  registerDeleteLinkRoute(app, now);
 
   methodNotAllowed(app, "/v1/links");
   methodNotAllowed(app, "/v1/links/:slug");
