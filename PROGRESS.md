@@ -6,15 +6,30 @@ Cross-session tracker. Every implementation session **reads this first** and upd
 
 ## Next session
 
-Paste **`prompts/20-full-smoke-and-m1-sweep.md`** into a fresh session — **the last prompt in M1**.
-Verify first (prompt 19): from repo root `pnpm test` (**756 green**) and `pnpm typecheck`.
-⚠️ **Four open questions are waiting: Q25, Q26, Q27, Q28.** **Q26 still has teeth** (a per-item `internal` failure inside a batch is reported to nobody). **Q28 is new and belongs to prompt 20's sweep** — `500 internal` is the one status `docs/api-contract.md` defines that the OpenAPI document still does not declare anywhere. Q25 (per-item `request_id`) and Q27 (`/v1/tags` grows monotonically) are unchanged.
-🚩 **Runbook Phase C is still unblocked and still un-actioned** — `pnpm mint-key --env staging --name ci-smoke` / `pnpm revoke-key --env <env> --prefix <prefix>`.
-**Hand-off to prompt 20 — read this before the M1 sweep:**
-✅ **The contract is executable now.** `docs/api-contract.md` is commentary (banner added 1 Sep 2026); `GET /v1/openapi.json` is the canonical description. `test/routes/openapi.test.ts` holds the cross-checks — if prompt 20 finds a behaviour the document misstates, fix the route definition, not the test's expectation.
-✅ **A new route cannot escape the sweep.** Three tests derive their subject from the running app rather than a list: router paths ↔ document paths, `UNAUTHENTICATED_PATHS` ↔ public operations, `IDEMPOTENT_PATHS` ↔ 409s. Adding a `/v1` route without documenting it, without a 405 guard, or without its 409 fails the suite immediately.
-⚠️ **`scripts/smoke.ts` has not been touched since prompt 05** and still runs the 6-step, ~8-request sequence in `docs/testing.md` §5. It does **not** yet exercise batch, stats, tags or the OpenAPI document. Prompt 20 is where that gets decided — note D25's quota discipline before adding requests.
-⚠️ **Response schemas are documented but not enforced at runtime.** `createRoute` validates *requests*; the response schemas in `schemas/resources.ts` are types plus documentation. A handler returning the wrong shape is a type error at build time, not a 500 at runtime — which is the intended trade, but worth knowing before prompt 20 writes assertions that assume runtime validation.
+🎉 **M1 is complete — there is no prompt 21 to run yet.** Prompts 21–28 are M3 stubs that PRD §18 says are detailed *after* pilot learnings, and M2 is the pilot soak itself (no prompts). The build is done; what remains is yours.
+
+Verify the state any time with: from repo root `pnpm test` (**776 green**) and `pnpm typecheck`.
+
+### What stands between here and the Curastax pilot
+
+**1. Deploy to staging.** Push `main`. CI typechecks, tests, applies D1 migrations, deploys, then smokes. A1–A4 are already done (`bbd3ed6`), so the deploy step should work — but see 2, because the smoke step will not.
+
+**2. 🚩 Runbook Phase C — now blocking, not merely pending.** Prompt 20 made smoke hard-fail without `SMOKE_API_KEY`. Until these exist, **every deploy workflow fails at its smoke step** (after deploying):
+```bash
+cd apps/api
+pnpm mint-key --env staging --name ci-smoke      # → gh secret set SMOKE_API_KEY_STAGING
+pnpm mint-key --env production --name ci-smoke   # → gh secret set SMOKE_API_KEY_PRODUCTION
+pnpm mint-key --env production --name curastax-pilot   # hand over out-of-band, shown once
+```
+
+**3. Secrets and rules this repo cannot see** — A5 Sentry DSN ×2, A6 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`, A8 notifications. And **A7, the zone rate-limiting rule on the redirect path (D24) — PRD §6 lists it as a P0 pilot blocker** and no test can assert it.
+
+**4. Runbook Phase B then Phase D** — confirm staging answers, then the canary link + two UptimeRobot monitors. Note D21's rule: the canary link stays **untagged** so it never pollutes tag aggregates, and its UA stays countable because it is the drift ruler.
+
+### Four open questions are still unanswered (none blocking)
+
+**Q26 has teeth** — a per-item `internal` failure inside a batch reaches nobody (200 response ⇒ no `onError` ⇒ no Sentry). If KV is flapping during a 100-item Curastax send, you would learn it from Curastax, not from monitoring. Worth deciding before the pilot rather than during it. **Q28** (`500` undeclared in the OpenAPI document), **Q27** (`/v1/tags` grows monotonically), **Q25** (per-item `request_id`) can wait.
+
 **Prompt 14's jq acceptance command is subtly wrong** (`.links|length, .next_cursor` parses as `.links | (length, .next_cursor)` and errors on any correct implementation). The intended check is `'(.links|length), .next_cursor'`. Left as-is in the prompt file; noted so a future session does not read it as a failure.
 
 ## Status
@@ -47,7 +62,7 @@ Verify first (prompt 19): from repo root `pnpm test` (**756 green**) and `pnpm t
 | 17 | batch-create | done | 2026-09-01 | **Bulk create is live; the create path now has one definition.** New: `services/links.ts` (`createLink` — resolve slug, insert, attach tags, read them back, awaited KV put), `schemas/batch-create.ts`, `routes/batch.ts`. `registerCreateLinkRoute` was reduced to a caller of `createLink`, so single and batch create cannot drift. 30 new tests; **695 total**. **The hand-off's two traps were both real and both are now pinned by tests:** batch registers before the `:slug` family (a test asserts POST is not swallowed into 405), and `/v1/links/batch` was added to the idempotency `app.use` list (a test asserts the replay). Each guard was mutation-checked — removing it fails exactly the test that covers it. **Items are validated per item, not by the wrapper:** the wrapper schema types `links` as `unknown[]` and only enforces the api-contract's whole-request faults (missing / non-array / empty / >100), because a bad item must become one `error` entry rather than a 400 for the other 99 (§7.2). The published document stays honest anyway — `.meta()` renders the real create body, pinned in `openapi-compat.test.ts` for prompt 19. **A non-`ApiError` inside an item (the awaited KV put, D20) becomes `internal` on that item and the loop continues**; its D1 row is left committed exactly as single create leaves it. |
 | 18 | stats-and-tags | done | 2026-09-01 | **The numbers are exposed; M1's read surface is complete.** New: `aggregateTagStats` + `listTagCounts` in `db/queries.ts`, `serializers/stats.ts`, `schemas/stats-query.ts`, `routes/stats.ts` (`/v1/links/{slug}/stats` + `/v1/stats`), `routes/tags.ts`. 23 new tests; **718 total**. **Two SQL details carry the whole D15 contract and both are mutation-checked:** `aggregateTagStats` writes `l.deleted_at IS NULL` out explicitly (tombstoning does **not** remove `link_tags` rows, so without it a deleted link keeps contributing), and `listTagCounts` uses **LEFT JOIN** so a tag whose last link was tombstoned still lists at `link_count: 0` rather than vanishing. Six mutations were run against the two queries (drop either tombstone filter, LEFT→inner JOIN, drop `ORDER BY`, drop `COALESCE`, read tombstones in link stats) — each fails exactly one test. `isoOrNull` was exported from `serializers/link.ts` rather than copied, so the ISO/null timestamp rule still has one implementation. **Route order was a non-issue this time**, confirmed rather than assumed: `/v1/links/:slug/stats` is three segments and `app.all("/v1/links/:slug")` is two, so the 405 guard cannot swallow it — a test pins that POST to the stats path is 405, not 404. |
 | 19 | openapi | done | 2026-09-01 | **`GET /v1/openapi.json` serves OpenAPI 3.1 — and `docs/api-contract.md` is now commentary; code is canonical.** That file carries a dated banner saying so. New: `routes/openapi.ts`, `schemas/error-envelope.ts` (envelope + the shared 401/405/415 response sets), `schemas/resources.ts` (every response body). 38 new tests; **756 total**. **Served with `doc31`, not `doc`** — `doc` emits 3.0; the API surface was read off the installed package's own `.d.mts` rather than from memory, since the hosted docs only show the 3.0 form. **`info.version` is `GIT_SHA ?? "dev"`**, the same string `/v1/health` reports, so a document and a probe from one deploy cannot disagree about which deploy they are. **Security is a document-level default** (`bearerAuth` on everything) with `security: []` on the two exempt paths — a route added without thinking about auth is documented as authenticated, which is what the middleware actually does to it. **Three lists are now derived rather than hand-maintained**, each pinned by a test that compares the document against the code that enforces the behaviour: `UNAUTHENTICATED_PATHS` (auth middleware) ↔ the operations marked public; `IDEMPOTENT_PATHS` (newly exported from the idempotency middleware, and now what `routes/api.ts` mounts from) ↔ the operations documenting 409; and the Hono router's own `/v1` paths ↔ the document's paths. **Serializer types are now `z.infer` of the published schemas**, so a documented field the code stops sending is a type error rather than a lie in the contract. `registerHealthRoute` moved from `app.get` to `app.openapi` — it was the only route missing from the document. Four mutations were run against the structural guards (drop a 405 guard ×2, un-document a route, drop the security default); each fails exactly the intended test. |
-| 20 | full-smoke-and-m1-sweep | todo | | Completes M1; staging smoke goes RED until runbook C is done — designed signal |
+| 20 | full-smoke-and-m1-sweep | done | 2026-09-01 | **M1 is complete.** `scripts/smoke.ts` went from health-only to the full `docs/testing.md` §5 lifecycle: health → create (tagged `smoke`) → fetch → manual-redirect → stats → delete → redirect-404, **7 requests** against a `MAX_SMOKE_REQUESTS` budget of 8 (D25). The sequence, the assertions and the cleanup live in `scripts/smoke-checks.ts` (importable by the Worker pool, no `node:*`); `smoke.ts` only maps env vars in and an exit code out. 20 new tests; **776 total**. **Verified against a real local Worker, not just stubs:** `FULL-SMOKE-OK`, and the smoke link confirmed tombstoned in D1 afterwards. Failure paths driven for real too — missing key prints the Phase C message and exits 1; a wrong key exits 1 naming the step (`POST /v1/links: returned 401`). **The redirect step reads its expected destination from the create response** rather than the literal we sent, because the API normalises a bare origin (`https://example.com` → `https://example.com/`) and asserting the literal would fail on a correct implementation. **One honest negative result:** the cleanup `finally` is *not* distinguishable by test — `step()` already contains every transport and parse failure, so a mutation moving the two cleanup calls into the `try` passes the suite. It stays as defence in depth and the comment says exactly that. The other four mutations (drop `redirect: "manual"`, drop the `smoke` tag, stop requiring the key, break a step) each fail the intended test. |
 | 21–28 | M3 hardening stubs | stub | | **Do not run.** Detailed after pilot (M2) learnings; sessions pointed here must stop and ask |
 
 Statuses: `todo` · `in-progress` · `done` · `blocked` · `stub`. A session marks its row `in-progress` on start, `done` (with date + notes) before stopping.
@@ -97,10 +112,49 @@ Anything that diverged from PRD/docs/prompt — **with a question for Shivendra;
 | 26 | prompt 17 | **A per-item `internal` error reaches nobody — batch is a Sentry blind spot.** In single create, a failed awaited KV put becomes a 500, so `app.onError` reports it and §15's "durable forensics = Sentry + D1 state" holds. In batch the same failure becomes one `error` item inside a **200**, so `onError` never runs, `reportError` is never called, and the request log line reads `status: 200` — an infra outage during a 100-item Curastax send would be invisible except to the caller. I did **not** add reporting: prompt 17 scopes the behaviour as "that item is `error internal`, the batch continues" and nothing more, and injecting `reportError` into the batch route is a design choice, not a detail. Options if you want it closed: (a) call the injected `reportError` per unexpected item, (b) log a single allowlisted line carrying the failed-item count, (c) accept the blind spot until P1. | open |
 | 27 | prompt 18 | **`/v1/tags` grows monotonically — zero-count rows never leave, and that changes what D26.6's ~1,000 threshold means.** Nothing prunes a `tags` row: tombstoning a link leaves its `link_tags` rows in place, and a PATCH that replaces a tag set detaches without deleting the now-orphaned tag. Both were **observed on the local dev D1**, which still lists `a`, `b`, `c`, `x`, `y`, `z` at `link_count: 0` from prompts 14–17's dev-server checks. Behaviour 6 of prompt 18 asks for exactly this ("assert and document"), so it is implemented and tested, not a deviation — but two consequences are worth your call before prompt 19 publishes the contract: (a) the "revisit past ~1,000 tags" trigger counts **ever-used** tags, not currently-used ones, so it will fire earlier than D26.6 implies; (b) Curastax's tag list will slowly fill with dead `tenant:*` entries once clinics churn. Options: leave it (honest, and a zero-count tag is real history), filter `link_count > 0` from the response, or add a prune to the P1 purge cron alongside the tombstone sweep (prompt 28). | open |
 | 28 | prompt 19 | **`500 internal` is the one contract status the OpenAPI document does not declare.** `docs/api-contract.md` defines it ("Unexpected. Also returned when the awaited KV write fails — retry with the same `Idempotency-Key`, it converges, D20"), and it is a real, reachable outcome on create, PATCH and DELETE. I documented the other two silent statuses this prompt — **405** (universal; every path registers a guard, and the sweep test proves it) and **415** (deterministic, already tested in `http.test.ts`) — because both are exact and mechanical. I stopped at 500 because *where* to declare it is an editorial choice about the published contract, not a fact I can read off the code: (a) on every operation, which is honest but adds a line of noise to all eleven; (b) only on the three write paths the contract explicitly names, which under-describes the read paths that can also fail unexpectedly; or (c) not at all, treating 500 as implicit for any HTTP API. My preference is (b) — it matches what the contract actually promises — but it is your call, and prompt 20's M1 sweep is the natural place to land it. | open |
+## M1 exit sweep (prompt 20, 1 Sep 2026)
+
+Every **P0** item from PRD §6 and the §8 endpoint summary, mapped to what covers it. Built by reading the tree, not from memory.
+
+| P0 item (PRD §6 / §8) | Where it lives | Proven by |
+|---|---|---|
+| Shorten endpoint (`POST /v1/links`) | `routes/links.ts` → `services/links.ts` | `routes/create-link.test.ts` (30) |
+| Redirect edge (`GET /{slug}`) | `routes/redirect.ts` | `routes/redirect-path.test.ts` (21) |
+| Custom slugs | `services/slugs.ts`, `schemas/fields.ts` | `services/slugs.test.ts` (23), `reserved-slugs.test.ts` (8) |
+| Expiry (lazy, 410) | `schemas/fields.ts`, `services/redirect.ts` | `redirect-path.test.ts`, `schemas/create-link.test.ts` |
+| Deactivate (`is_active`) | `routes/links.ts` PATCH | `routes/update-link.test.ts` (36) |
+| Click counting + UA denylist (D21) | `services/counting.ts`, `bot-denylist.ts` | `services/counting.test.ts` (10), `routes/click-counting.test.ts` (9) |
+| API key auth (D10–D12) | `middleware/auth.ts`, `services/keys.ts` | `middleware/auth.test.ts` (18), `services/keys.test.ts` (8) |
+| Bulk create (≤100) | `routes/batch.ts` | `routes/batch-create.test.ts` (25) |
+| Tags (implicit create, filter, list) | `db/queries.ts`, `routes/tags.ts` | `routes/tags.test.ts` (6), `list-links.test.ts`, `stats.test.ts` |
+| Delete — tombstoned (D15) | `routes/links.ts`, `tombstoneLinkBySlug` | `routes/delete-link.test.ts` (25) |
+| Update destination | `routes/links.ts` PATCH | `routes/update-link.test.ts` (36) |
+| Idempotency, D1-backed (D18) | `middleware/idempotency.ts`, `services/idempotency.ts` | `routes/idempotency.test.ts` (23) + batch replay |
+| `external_id` passthrough (D19) | `schemas/*`, `db/queries.ts` | `schemas/create-link.test.ts`, `list-links.test.ts` |
+| Key mint/revoke scripts (D14) | `scripts/mint-key.ts`, `revoke-key.ts` | `scripts/key-admin.test.ts` (21) + integration (5) |
+| `GET /v1/health` (D25) | `routes/health.ts` | `routes/health.test.ts` (7) |
+| No-sensitive-telemetry (D23) | `telemetry/sentry.ts`, `logger.ts` | **pinned**: `sentry-scrubber.pinned.test.ts` (13), `logger-allowlist.pinned.test.ts` (3) |
+| Sentry error reporting | `telemetry/sentry.ts` | `telemetry/error-reporting.test.ts` (5) |
+| D1 migrations | `migrations/0001_init.sql` | `schema.test.ts` (13), re-applied from zero per test |
+| `GET /v1/links` list/filter | `routes/links.ts` | `routes/list-links.test.ts` (36) |
+| `GET /v1/links/{slug}` | `routes/links.ts` | `routes/read-link.test.ts` (10) |
+| `GET /v1/links/{slug}/stats`, `GET /v1/stats`, `GET /v1/tags` | `routes/stats.ts`, `routes/tags.ts` | `routes/stats.test.ts` (16), `tags.test.ts` (6) |
+| `GET /v1/openapi.json` (D22) | `routes/openapi.ts` | `routes/openapi.test.ts` (22) |
+| Staging + production environments | `wrangler.toml` — real D1/KV IDs pasted | runbook A3/A4, commit `bbd3ed6` |
+| Post-deploy smoke (PRD §14) | `scripts/smoke-checks.ts` | `scripts/smoke-checks.test.ts` (25), plus a real local run |
+
+**Two P0 items are not code and are not done.** Neither is a gap in the build; both are Shivendra's hands:
+- **Zone rate-limiting rule on the redirect path (D24, runbook A7)** — a Cloudflare dashboard rule. PRD §6 lists it as a **pilot blocker**, and nothing in the repo can assert it.
+- **Sentry DSN secrets (A5) / GitHub Actions secrets (A6) / notifications (A8)** — set outside the repo, so this sweep cannot confirm them either way. They are listed as unverified rather than done.
+
+**Workflow env-var names checked against the script, name by name:** `deploy-staging.yml` and `deploy-production.yml` both pass `SMOKE_API_BASE`, `SMOKE_REDIRECT_BASE` and `SMOKE_API_KEY` — exactly the three `readSmokeConfig` requires. No mismatch.
+
+⚠️ **CI consequence of this prompt, stated plainly:** smoke now **hard-fails without `SMOKE_API_KEY`**. Until runbook **Phase C** mints the two `ci-smoke` keys and stores them as `SMOKE_API_KEY_STAGING` / `SMOKE_API_KEY_PRODUCTION`, every deploy workflow will fail at its smoke step — the deploy itself will already have happened. That is the intended design (a deploy nobody smoke-tested should not report success), but it means **Phase C is now blocking, not merely pending**.
+
 ## Milestone checklist (mirrors PRD §18)
 
 - [x] **M0 — Foundation** = prompts 01–05 — **complete 31 Aug 2026.** Runbook Phase A+B can now be exercised end-to-end: a push to `main` typechecks, tests, applies migrations, deploys staging and smokes `GET /v1/health`. Phase A2–A6 must be done first or those runs stay red.
-- [ ] **M1 — Core API** = prompts 06–20
+- [x] **M1 — Core API** = prompts 06–20 — **complete 1 Sep 2026.** Every P0 endpoint, the redirect path, KV write-through, counting + UA denylist, idempotency, key scripts, the OpenAPI document and the full post-deploy smoke. 776 tests green; `tsc` clean. See the M1 exit sweep above for the item-by-item mapping.
 - [ ] **M2 — Pilot** — no prompts: Curastax integration (their side), runbook Phases B–D, 4-week soak, §17 exit criteria
 - [ ] **M3 — Hardening** = prompts 21–28, detailed after pilot learnings
 - [ ] **M4 — Public launch**
@@ -111,6 +165,6 @@ Anything that diverged from PRD/docs/prompt — **with a question for Shivendra;
 | When | Items |
 |---|---|
 | **Before prompt 01** | A1 only (Node + corepack; `wrangler login` can wait until A3) |
-| **Before first push to GitHub / first deploy** | A2 zone + DNS `100::` records (**done**; apex/Pages conflict resolved by D29 — static site now on `www`) · A3 D1 create ×2 + paste IDs · A4 KV create ×2 + paste IDs · A5 Sentry DSN secrets ×2 · A6 repo + `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` · A7 zone rate rule · A8 notifications + Time Travel check. Until A2–A6 are done, pushes to `main` produce **red deploy-staging runs** — harmless but noisy; either front-load Phase A or hold pushes. |
+| **Before first push to GitHub / first deploy** | **A1–A4 done** (commit `bbd3ed6`, 31 Aug 2026): zone + DNS `100::` (apex/Pages conflict resolved by D29 — static site on `www`), and real D1 + KV ids are pasted into `wrangler.toml` for both envs. **Unverified from the repo — they live in Cloudflare/GitHub/Sentry:** A5 Sentry DSN secrets ×2 · A6 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` · A7 zone rate rule (**a PRD §6 P0 pilot blocker**) · A8 notifications + Time Travel check. |
 | **After prompt 07** | Phase C: mint `ci-smoke` keys ×2 → `SMOKE_API_KEY_STAGING`/`_PRODUCTION` GH secrets; mint `curastax-pilot` key |
 | **Before pilot (M2)** | Phase B checks · Phase D: canary link + UptimeRobot ×2 + alert channel |
