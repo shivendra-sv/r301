@@ -6,31 +6,28 @@ Cross-session tracker. Every implementation session **reads this first** and upd
 
 ## Next session
 
-🎉 **M1 is complete — there is no prompt 21 to run yet.** Prompts 21–28 are M3 stubs that PRD §18 says are detailed *after* pilot learnings, and M2 is the pilot soak itself (no prompts). The build is done; what remains is yours.
+🚀 **Deployed. `r301.dev` is live in production.** M1 is complete and shipped; M2 is the pilot soak (no prompts), and the M3 stubs await pilot learnings.
 
-Verify the state any time with: from repo root `pnpm test` (**776 green**) and `pnpm typecheck`.
+| | State (verified 1 Sep 2026) |
+|---|---|
+| **staging** | `api-staging.r301.dev` + `staging.r301.dev` — healthy, `version` = `047714d` |
+| **production** | `api.r301.dev` + `r301.dev` — healthy, `version` = `047714d`, tag `v0.1.1` |
+| **apex** | `r301.dev/` → **302** (the D29 `/` → `www` redirect). The pre-launch 522 is gone. |
+| **CI** | staging (push → main) and production (tag `v*`) both **green end to end, smoke included** |
+| **Runbook** | A1–A6 ✅ · Phase B ✅ · Phase C ✅ (smoke keys) |
 
-### What stands between here and the Curastax pilot
+### What actually remains before the Curastax pilot
 
-**1. Deploy to staging.** Push `main`. CI typechecks, tests, applies D1 migrations, deploys, then smokes. A1–A4 are already done (`bbd3ed6`), so the deploy step should work — but see 2, because the smoke step will not.
+1. **A7 — zone rate-limiting rule (D24).** Dashboard → `r301.dev` → Security → WAF → Rate limiting rules: hostname equals `r301.dev`, characteristic IP, ~100 req / 10 s, action Block. **PRD §6 lists this as a P0 pilot blocker** and no test or CLI can assert it — it is the last P0 item outstanding.
+2. **A8 — notifications.** Workers free-tier usage alerts. (The Time Travel window question is unanswerable until the databases are older than the window — the runbook says re-run on/after ~8 Sep 2026.)
+3. **`curastax-pilot` key** — not minted yet; production holds only `ci-smoke`. `pnpm --filter @r301/api mint-key --env production --name curastax-pilot`, shown once, hand over out-of-band.
+4. **Phase D** — canary link (untagged, never deleted — it is both the uptime probe and D21's drift ruler) + two UptimeRobot monitors + alert channel.
 
-**2. 🚩 Runbook Phase C — now blocking, not merely pending.** Prompt 20 made smoke hard-fail without `SMOKE_API_KEY`. Until these exist, **every deploy workflow fails at its smoke step** (after deploying):
-```bash
-cd apps/api
-pnpm mint-key --env staging --name ci-smoke      # → gh secret set SMOKE_API_KEY_STAGING
-pnpm mint-key --env production --name ci-smoke   # → gh secret set SMOKE_API_KEY_PRODUCTION
-pnpm mint-key --env production --name curastax-pilot   # hand over out-of-band, shown once
-```
+### Notes for whoever picks this up
 
-**3. Secrets and rules this repo cannot see** — A5 Sentry DSN ×2, A6 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`, A8 notifications. And **A7, the zone rate-limiting rule on the redirect path (D24) — PRD §6 lists it as a P0 pilot blocker** and no test can assert it.
-
-**4. Runbook Phase B then Phase D** — confirm staging answers, then the canary link + two UptimeRobot monitors. Note D21's rule: the canary link stays **untagged** so it never pollutes tag aggregates, and its UA stays countable because it is the drift ruler.
-
-### Four open questions are still unanswered (none blocking)
-
-**Q26 has teeth** — a per-item `internal` failure inside a batch reaches nobody (200 response ⇒ no `onError` ⇒ no Sentry). If KV is flapping during a 100-item Curastax send, you would learn it from Curastax, not from monitoring. Worth deciding before the pilot rather than during it. **Q28** (`500` undeclared in the OpenAPI document), **Q27** (`/v1/tags` grows monotonically), **Q25** (per-item `request_id`) can wait.
-
-**Prompt 14's jq acceptance command is subtly wrong** (`.links|length, .next_cursor` parses as `.links | (length, .next_cursor)` and errors on any correct implementation). The intended check is `'(.links|length), .next_cursor'`. Left as-is in the prompt file; noted so a future session does not read it as a failure.
+- **Smoke leftovers accumulate in production as tombstones** (3 rows, all tombstoned). That is D15 working as designed — `UNIQUE(slug)` spans tombstones and the purge cron is P1 (prompt 28). Not a leak, but the row count grows by one per deploy.
+- **Two open questions remain, neither blocking:** **Q26** (a per-item `internal` failure inside a batch reaches nobody — worth deciding *before* the pilot, since a KV wobble during a 100-item Curastax send would be invisible to monitoring) and **Q28** (`500` undeclared in the OpenAPI document). Q27 (`/v1/tags` grows monotonically) is informational. Q25, Q29 and Q30 are resolved.
+- **Prompt 14's jq acceptance command is subtly wrong** (`.links|length, .next_cursor` parses as `.links | (length, .next_cursor)`). The intended check is `'(.links|length), .next_cursor'`. Left as-is in the prompt file; noted so a future session does not read it as a failure.
 
 ## Status
 
