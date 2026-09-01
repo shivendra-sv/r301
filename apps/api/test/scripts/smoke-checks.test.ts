@@ -7,6 +7,8 @@ import {
   assertRedirect,
   assertStats,
   assertHealth,
+  backoffDelays,
+  KV_CONVERGENCE_TIMEOUT_MS,
   MAX_SMOKE_REQUESTS,
   readSmokeConfig,
   runSmoke,
@@ -94,7 +96,15 @@ function fullRoute(deleted: { yes: boolean }): (call: Call) => Response {
 }
 
 function config(fetchImpl: typeof globalThis.fetch) {
-  return { apiBase: API, redirectBase: REDIRECT, apiKey: KEY, fetchImpl };
+  // sleepImpl is a no-op everywhere: docs/testing.md §2 forbids wall-clock in
+  // tests, and the retry schedules are asserted directly via backoffDelays().
+  return {
+    apiBase: API,
+    redirectBase: REDIRECT,
+    apiKey: KEY,
+    fetchImpl,
+    sleepImpl: async () => undefined,
+  };
 }
 
 describe("smoke config (runbook Phase C)", () => {
@@ -293,9 +303,10 @@ describe("the full sequence (docs/testing.md §5)", () => {
   });
 
   it("names the failing step and exits unhappy when one step misbehaves", async () => {
+    const route = fullRoute({ yes: false });
     const { fetchImpl } = stubFetch((call) => {
       if (call.url === `${API}/v1/links/${SLUG}/stats`) return json({ nope: true }, 500);
-      return fullRoute({ yes: false })(call);
+      return route(call);
     });
 
     const result = await runSmoke(config(fetchImpl));
@@ -370,5 +381,129 @@ describe("the full sequence (docs/testing.md §5)", () => {
     const result = await runSmoke(config(fetchImpl));
 
     expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * Deviation 5 / question 30, resolved as option (a). D20 makes KV an
+ * eventually-consistent cache with a **≤ 60 s** convergence window, so the
+ * post-delete check has to wait for that window rather than assert the edge is
+ * instantaneous — which is what failed the first production deploy.
+ */
+describe("post-delete convergence (D20)", () => {
+  it("schedules retries that back off and stay inside the window", () => {
+    const delays = backoffDelays(KV_CONVERGENCE_TIMEOUT_MS);
+
+    expect(delays.length).toBeGreaterThan(3);
+    // Strictly increasing until the cap, and never a busy-loop.
+    expect(Math.min(...delays)).toBeGreaterThanOrEqual(250);
+    // The whole schedule fits the documented window.
+    expect(delays.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(KV_CONVERGENCE_TIMEOUT_MS);
+    // Bounded request count — polling must not blow D25's quota discipline.
+    expect(delays.length).toBeLessThanOrEqual(15);
+  });
+
+  it("passes when the edge converges on a later poll", async () => {
+    let redirectHits = 0;
+    const { fetchImpl, calls } = stubFetch((call) => {
+      if (call.url === `${REDIRECT}/${SLUG}`) {
+        redirectHits += 1;
+        // 1st = the pre-delete 302; 2nd/3rd = stale; 4th = converged.
+        return redirectHits >= 4
+          ? new Response(null, { status: 404 })
+          : new Response(null, { status: 302, headers: { Location: DESTINATION } });
+      }
+      return healthyRoute(call);
+    });
+
+    const result = await runSmoke({ ...config(fetchImpl), sleepImpl: async () => undefined });
+
+    expect(result.failures).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(calls.filter((c) => c.url === `${REDIRECT}/${SLUG}`).length).toBeGreaterThan(2);
+  });
+
+  it("fails, naming the window, when the edge never converges", async () => {
+    const { fetchImpl } = stubFetch((call) => {
+      if (call.url === `${REDIRECT}/${SLUG}`) {
+        return new Response(null, { status: 302, headers: { Location: DESTINATION } });
+      }
+      return healthyRoute(call);
+    });
+
+    const result = await runSmoke({ ...config(fetchImpl), sleepImpl: async () => undefined });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures.join("\n")).toContain("60");
+    expect(result.failures.join("\n")).toContain("302");
+  });
+
+  it("does not poll when the edge is already converged — the happy path stays 7 requests", async () => {
+    const { fetchImpl, calls } = stubFetch(fullRoute({ yes: false }));
+
+    const result = await runSmoke({ ...config(fetchImpl), sleepImpl: async () => undefined });
+
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(7);
+    expect(calls.length).toBeLessThanOrEqual(MAX_SMOKE_REQUESTS);
+  });
+});
+
+/**
+ * The other thing the first production deploy showed: a one-off `522` seconds
+ * after the Worker deployed, while routes were still propagating.
+ */
+describe("transient edge failures (route propagation)", () => {
+  it("retries a 522 on a GET step and succeeds once the route is up", async () => {
+    let fetchHits = 0;
+    const route = fullRoute({ yes: false });
+    const { fetchImpl } = stubFetch((call) => {
+      if (call.url === `${API}/v1/links/${SLUG}` && call.method === "GET") {
+        fetchHits += 1;
+        if (fetchHits === 1) return new Response(null, { status: 522 });
+      }
+      return route(call);
+    });
+
+    const result = await runSmoke({ ...config(fetchImpl), sleepImpl: async () => undefined });
+
+    expect(result.failures).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  // A 500 is *our* Worker failing — D20 returns it when the awaited KV write
+  // fails. Retrying would mask a real defect behind a slow green.
+  it("does not retry our own 500", async () => {
+    let hits = 0;
+    const route = fullRoute({ yes: false });
+    const { fetchImpl } = stubFetch((call) => {
+      if (call.url === `${API}/v1/links/${SLUG}/stats`) {
+        hits += 1;
+        return new Response(null, { status: 500 });
+      }
+      return route(call);
+    });
+
+    const result = await runSmoke({ ...config(fetchImpl), sleepImpl: async () => undefined });
+
+    expect(result.ok).toBe(false);
+    expect(hits).toBe(1);
+  });
+
+  // Create carries no Idempotency-Key, so a retry could create a second link.
+  it("never retries the create, even on a transient", async () => {
+    let posts = 0;
+    const { fetchImpl } = stubFetch((call) => {
+      if (call.url === `${API}/v1/links` && call.method === "POST") {
+        posts += 1;
+        return new Response(null, { status: 522 });
+      }
+      return healthyRoute(call);
+    });
+
+    const result = await runSmoke({ ...config(fetchImpl), sleepImpl: async () => undefined });
+
+    expect(result.ok).toBe(false);
+    expect(posts).toBe(1);
   });
 });

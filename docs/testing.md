@@ -63,6 +63,9 @@ No numeric coverage gate. The gate is: **every behavior named in the current pro
 3. `GET /v1/links/{slug}` → 200.
 4. `GET {redirect}/{slug}` with `redirect: "manual"` → 302 + correct `Location`.
 5. `GET /v1/links/{slug}/stats` → 200 (no count assertion — counting is async).
-6. `DELETE` → 204; redirect now 404.
+6. `DELETE` → 204.
+7. Redirect **converges** to 404: poll `{redirect}/{slug}` with capped exponential backoff until it 404s, up to **60 s** — `design.md` §3 / D20's stated KV convergence window.
+   - ⚠️ **This step must not assert an immediate 404**, which is what the original text said. KV is an eventually-consistent, rebuildable cache (D20 — it is why the redirect path takes no `cacheTtl` override), so the edge may still serve the deleted entry for a moment after `DELETE` returns 204. Asserting immediacy made the gate flaky rather than strict: it failed the first production deploy (`returned 302, expected 404`) while D1 was correctly tombstoned, and a re-run passed. Resolved as PROGRESS deviation 5 / question 30, option (a), 1 Sep 2026.
+   - Transient **edge** 5xx (`502/503/504/521-524`) are retried on **GET only**, for up to 15 s — a freshly deployed route can 5xx while it propagates (a real `522` on step 3 of that same deploy). `500` is deliberately **not** retried: that is our own Worker failing (D20 returns it when the awaited KV write fails) and retrying would hide a defect behind a slow green. `POST`/`DELETE` are never retried — create carries no `Idempotency-Key`, so a repeat could leave two links behind.
 
-~8 requests total (quota discipline, D25). Exits non-zero on any mismatch; CI fails the deploy.
+**7 requests on the happy path** (quota discipline, D25 — `MAX_SMOKE_REQUESTS` pins it). The retry schedules add requests only when the edge is slow, which is the case where the deploy is already in trouble. Exits non-zero on any mismatch; CI fails the deploy.

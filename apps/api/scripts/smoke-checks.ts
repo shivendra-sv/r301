@@ -18,6 +18,50 @@ export const SMOKE_DESTINATION = "https://example.com";
  */
 export const MAX_SMOKE_REQUESTS = 8;
 
+/**
+ * D20: KV is a rebuildable cache, eventually consistent, with a stated
+ * convergence window of 60 s — which is exactly why the redirect path takes no
+ * `cacheTtl` override. The post-delete check therefore *waits* for that window
+ * instead of asserting the edge is instantaneous. Asserting immediacy is what
+ * failed the first production deploy (PROGRESS deviation 5 / question 30).
+ */
+export const KV_CONVERGENCE_TIMEOUT_MS = 60_000;
+
+/**
+ * A route that has only just been deployed can 5xx at the edge for a few
+ * seconds — a real `522` on step 3 of that same deploy is what put this here.
+ * Shorter than the KV window: this is propagation, not cache convergence.
+ */
+export const TRANSIENT_RETRY_TIMEOUT_MS = 15_000;
+
+/**
+ * Edge-level "not ready yet" statuses. **500 is deliberately absent**: that is
+ * our own Worker failing — D20 returns it when the awaited KV write fails — and
+ * retrying it would hide a real defect behind a slow green.
+ */
+export const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([
+  502, 503, 504, 521, 522, 523, 524,
+]);
+
+/**
+ * Exponential backoff, capped, truncated to fit `timeoutMs`. Returned as a
+ * plain schedule so the pacing is testable without waiting for it — and so the
+ * request count it implies is visible rather than emergent (D25).
+ */
+export function backoffDelays(timeoutMs: number): number[] {
+  const delays: number[] = [];
+  let delay = 500;
+  let spent = 0;
+
+  while (spent + delay <= timeoutMs) {
+    delays.push(delay);
+    spent += delay;
+    delay = Math.min(delay * 2, 8_000);
+  }
+
+  return delays;
+}
+
 export interface SmokeConfig {
   /** Origin of the API surface, e.g. https://api-staging.r301.dev */
   apiBase: string;
@@ -25,6 +69,8 @@ export interface SmokeConfig {
   redirectBase: string;
   apiKey: string;
   fetchImpl?: typeof globalThis.fetch;
+  /** Injected in tests so the retry schedules cost no wall-clock. */
+  sleepImpl?: (ms: number) => Promise<void>;
 }
 
 export interface SmokeResult {
@@ -200,10 +246,33 @@ async function fetchStep(
 
 export async function runSmoke(config: SmokeConfig): Promise<SmokeResult> {
   const doFetch = config.fetchImpl ?? globalThis.fetch;
+  const sleep = config.sleepImpl ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const apiBase = config.apiBase.replace(/\/$/, "");
   const redirectBase = config.redirectBase.replace(/\/$/, "");
   const authed: RequestInit = { headers: { Authorization: `Bearer ${config.apiKey}` } };
   const failures: string[] = [];
+
+  /**
+   * One request, retried only when the *edge* says "not ready" and only when
+   * the method is safe to repeat. GET only: create carries no Idempotency-Key,
+   * so retrying it could leave two links behind, and a repeated DELETE would
+   * turn its own 204 into a 404.
+   */
+  async function fetchOnce(url: string, init: RequestInit): Promise<Fetched> {
+    const method = init.method ?? "GET";
+    const retryable = method === "GET";
+    const schedule = retryable ? backoffDelays(TRANSIENT_RETRY_TIMEOUT_MS) : [];
+
+    let res = await fetchStep(doFetch, url, init);
+
+    for (const delay of schedule) {
+      if (!TRANSIENT_STATUSES.has(res.status)) break;
+      await sleep(delay);
+      res = await fetchStep(doFetch, url, init);
+    }
+
+    return res;
+  }
 
   /** Runs one step, turning a transport failure into that step's failure. */
   async function step(
@@ -213,7 +282,7 @@ export async function runSmoke(config: SmokeConfig): Promise<SmokeResult> {
     check: (res: Fetched) => string[],
   ): Promise<Fetched | null> {
     try {
-      const res = await fetchStep(doFetch, url, init);
+      const res = await fetchOnce(url, init);
       failures.push(...check(res));
 
       return res;
@@ -284,9 +353,30 @@ export async function runSmoke(config: SmokeConfig): Promise<SmokeResult> {
       assertNoContent(res.status),
     );
 
-    await step("redirect-after-delete", `${redirectBase}/${slug}`, { redirect: "manual" }, (res) =>
-      assertNotFound(res.status),
-    );
+    // D20, and the reason this is a poll rather than a single read: KV is
+    // eventually consistent, so the edge may still serve the deleted entry for
+    // up to the convergence window. D1 is already authoritative at this point —
+    // what is being waited on is the cache catching up, not the delete.
+    try {
+      const schedule = backoffDelays(KV_CONVERGENCE_TIMEOUT_MS);
+      let res = await fetchOnce(`${redirectBase}/${slug}`, { redirect: "manual" });
+
+      for (const delay of schedule) {
+        if (res.status === 404) break;
+        await sleep(delay);
+        res = await fetchOnce(`${redirectBase}/${slug}`, { redirect: "manual" });
+      }
+
+      if (res.status !== 404) {
+        failures.push(
+          `GET {redirect}/{slug} after delete: still ${res.status} after ` +
+            `${KV_CONVERGENCE_TIMEOUT_MS / 1000} s (D20's KV convergence window). ` +
+            "The DELETE returned 204, so D1 is tombstoned — this is the edge not converging.",
+        );
+      }
+    } catch (err) {
+      failures.push(`redirect-after-delete: request failed — ${String(err)}`);
+    }
   }
 
   const ok = failures.length === 0;
