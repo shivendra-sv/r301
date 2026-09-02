@@ -3,6 +3,11 @@
 # must never appear in apps/api/wrangler.toml: a Workers route on the same
 # hostname shadows the Pages domain and takes the site down.
 #
+# Only apps/www/public is uploaded, and direct upload ships every file in the
+# directory it is given — so `public/` holds the site and nothing else. Package
+# plumbing (package.json, README.md) sits one level up, outside the upload, and
+# therefore cannot become publicly reachable.
+#
 # Manual trigger, matching deploy-staging/deploy-production (PROGRESS deviation
 # 6, 1 Sep 2026): a merge to `main` ships nothing. Run it from Actions → Deploy
 # www → Run workflow.
@@ -49,6 +54,6 @@ jobs:
         # --branch must match the Pages project's production branch, or a direct
         # upload lands as a *preview* deployment and www.r301.dev never updates.
         run: >-
-          pnpm --filter @r301/api exec wrangler pages deploy "$GITHUB_WORKSPACE/apps/www"
+          pnpm --filter @r301/api exec wrangler pages deploy "$GITHUB_WORKSPACE/apps/www/public"
           --project-name=r301
           --branch=main
