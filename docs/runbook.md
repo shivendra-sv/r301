@@ -143,4 +143,16 @@ Per **ADR D29** `www.r301.dev` is a Cloudflare **Pages custom domain**, not a Wo
 - [x] Confirm the project's **production branch is `main`** (Settings → Builds & deployments). The workflow passes `--branch=main`; if it does not match, direct uploads land as *preview* deployments and `www.r301.dev` never updates.
   - Confirmed 1 Sep 2026 by the first successful deploy (run `33555974176`, 5 files): `https://www.r301.dev/` returned **200** serving the new page, so the upload landed as **production**, not a preview. The apex chain also verified live — `https://r301.dev/` → **302** → `https://www.r301.dev/` (D29), with the Workers route and the Pages custom domain coexisting as intended.
   - ⚠️ The upload directory must be **absolute** in `deploy-www.yml`. `pnpm --filter @r301/api exec` runs with the cwd set to `apps/api`, so a relative `apps/www` resolves to `apps/api/apps/www` — the first attempt (run `33555839918`) failed `ENOENT` on exactly that. It now passes `"$GITHUB_WORKSPACE/apps/www"`. The same cwd makes wrangler log a `missing pages_build_output_dir` warning about `apps/api/wrangler.toml`; it ignores the file, as the warning says.
-  - Note: direct upload ships **every** file in `apps/www/`, so `package.json` and `README.md` are publicly reachable (`https://www.r301.dev/package.json` → 200). Harmless today; add an `apps/www/.assetsignore` listing them if that should stop.
+  - Direct upload ships **every** file in the directory it is given, so the site was moved to `apps/www/public/` and the deploy points there. `package.json` and `README.md` now sit outside the upload and are absent from the deployment — verified on the deployment host, where both paths fall back to `index.html` instead of serving the file. Keep it that way: anything added to `public/` is public.
+
+### W2 · One-off cache purge for the files that were briefly public
+
+`package.json` and `README.md` were served from `www.r301.dev` between the first deploy and the `public/` restructure (both 1 Sep 2026). They are gone from the deployment, but Cloudflare cached them with `cache-control: public, s-maxage=604800` — **7 days** — and the edge ignores a client `no-cache`, so `https://www.r301.dev/package.json` still returned 200 after the fix.
+
+- [ ] Purge them: Dashboard → `r301.dev` → Caching → Configuration → **Purge Custom URLs**, listing `https://www.r301.dev/package.json` and `https://www.r301.dev/README.md`. (Purge Everything also works — the site is three files.)
+- [ ] Re-check: both should return the `index.html` fallback, not the file.
+```bash
+curl -s https://www.r301.dev/package.json | head -c 40   # want: <!doctype html
+```
+  - Not urgent — neither file contains anything sensitive, and both fall out of cache on their own by **8 Sep 2026**. Purge only to make it immediate.
+  - This needs `Zone · Cache Purge`, which the A6 `CLOUDFLARE_API_TOKEN` does not have. Adding that scope is **not** recommended just for this: it is a one-off, and a deploy token that can purge production cache is a bigger blast radius than the problem.
