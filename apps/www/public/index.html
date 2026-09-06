@@ -5,9 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>r301.dev — an API-first URL shortener at the edge</title>
 <meta name="description" content="r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.">
-<meta name="color-scheme" content="dark light">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f3f2f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#201e1d" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://www.r301.dev/">
+
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#201e1d">
+<link rel="manifest" href="/site.webmanifest">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;800&display=swap">
 <link rel="stylesheet" href="/styles.css">
 
 <meta property="og:type" content="website">
@@ -15,70 +26,68 @@
 <meta property="og:url" content="https://www.r301.dev/">
 <meta property="og:title" content="r301.dev — an API-first URL shortener at the edge">
 <meta property="og:description" content="r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://www.r301.dev/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The r301.dev wordmark over a long ink rule and a short red one.">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="r301.dev — an API-first URL shortener at the edge">
 <meta name="twitter:description" content="r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.">
+<meta name="twitter:image" content="https://www.r301.dev/og-image.png">
+<meta name="twitter:image:alt" content="The r301.dev wordmark over a long ink rule and a short red one.">
 </head>
 <body>
 
-<a class="skip-link" href="#main">Skip to content</a>
+<a class="skip" href="#main">Skip to content</a>
 
-<div class="rail" aria-hidden="true">
-  <span class="rail__mark"></span>
-  <span class="rail__text">301 · Moved Permanently</span>
-</div>
-
-<div class="shell">
+<div class="frame">
 
   <header class="masthead">
-    <a class="wordmark" href="/" aria-label="r301.dev home">
-      <span class="wordmark__r">r</span><span class="wordmark__n">301</span><span class="wordmark__tld">.dev</span>
-    </a>
+    <p class="wordmark"><span class="wordmark-name">r301</span><span class="wordmark-tld">.dev</span></p>
+    <p class="status">Private beta</p>
   </header>
 
-  <main id="main" class="hero" aria-labelledby="hero-title">
+  <main id="main">
 
-    <p class="badge" data-reveal style="--i:0">
-      <span class="badge__dot" aria-hidden="true"></span>
-      <span class="badge__text">Private beta — access by request</span>
-    </p>
+    <h1 class="headline">Short links,<br>minus the dashboard.</h1>
 
-    <h1 class="hero__title" id="hero-title" data-reveal style="--i:1">
-      Short links your<br>
-      <em>code</em> creates.
-    </h1>
+    <div class="rules" aria-hidden="true">
+      <span class="rule rule-long"></span>
+      <span class="rule rule-short"></span>
+    </div>
 
-    <p class="lede" data-reveal style="--i:2">
-      r301.dev creates, updates and retires short links through one REST API,
-      and serves every redirect from Cloudflare's edge — in the same datacenter
-      as the person who clicked it. There is no dashboard, and that is the point.
-    </p>
+    <div class="below">
+      <p class="lede">
+        r301.dev is a URL shortener that's only an API. Your code creates and
+        retires the links. Cloudflare's edge serves every redirect.
+      </p>
 
-    <div class="cta-row" data-reveal style="--i:3">
-      <a class="cta cta--primary"
-         href="https://registry.scalar.com/@r301/apis/r301dev-api"
-         target="_blank" rel="noopener noreferrer">
-        <span>API playground &amp; docs</span>
-        <svg class="cta__icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-          <path d="M5.5 3h7.5v7.5M13 3 3.2 12.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="visually-hidden">(opens in a new tab)</span>
-      </a>
-      <a class="cta cta--ghost"
-         href="mailto:mail@r301.dev?subject=r301.dev%20API%20key%20request&amp;body=Name%3A%0ACompany%3A%0AWhat%20you%27re%20building%3A%0AExpected%20volume%20%28links%20per%20month%29%3A%0A">
-        <span>Request an API key</span>
-        <span class="cta__hint" aria-hidden="true">mail@r301.dev</span>
-      </a>
+      <div class="actions">
+        <a class="cta cta-primary"
+           href="https://registry.scalar.com/@r301/apis/r301dev-api"
+           target="_blank" rel="noopener noreferrer">
+          API playground &amp; docs
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M3.5 12.5 12.5 3.5M5 3.5h7.5V11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"/>
+          </svg>
+          <span class="sr-only">(opens in a new tab)</span>
+        </a>
+        <a class="cta cta-secondary"
+           href="mailto:mail@r301.dev?subject=r301.dev%20API%20key%20request&amp;body=Name%3A%0ACompany%3A%0AWhat%20you%27re%20building%3A%0AExpected%20volume%20%28links%20per%20month%29%3A%0A">
+          Request an API key
+        </a>
+      </div>
     </div>
 
   </main>
 
-  <footer class="footer">
-    <p class="footer__domain">r301.dev</p>
-    <a class="footer__link"
-       href="https://registry.scalar.com/@r301/apis/r301dev-api"
-       target="_blank" rel="noopener noreferrer">API documentation</a>
-    <p class="footer__copy">© 2026 r301.dev</p>
+  <footer class="colophon">
+    <p>© 2026 r301.dev</p>
+    <p class="colophon-links">
+      <a href="https://registry.scalar.com/@r301/apis/r301dev-api"
+         target="_blank" rel="noopener noreferrer">API documentation<span class="sr-only"> (opens in a new tab)</span></a>
+      <a href="mailto:mail@r301.dev">mail@r301.dev</a>
+    </p>
   </footer>
 
 </div>
