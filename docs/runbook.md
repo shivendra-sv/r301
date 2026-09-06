@@ -149,8 +149,10 @@ Per **ADR D29** `www.r301.dev` is a Cloudflare **Pages custom domain**, not a Wo
 
 `package.json` and `README.md` were served from `www.r301.dev` between the first deploy and the `public/` restructure (both 1 Sep 2026). They are gone from the deployment, but Cloudflare cached them with `cache-control: public, s-maxage=604800` — **7 days** — and the edge ignores a client `no-cache`, so `https://www.r301.dev/package.json` still returned 200 after the fix.
 
-- [ ] Purge them: Dashboard → `r301.dev` → Caching → Configuration → **Purge Custom URLs**, listing `https://www.r301.dev/package.json` and `https://www.r301.dev/README.md`. (Purge Everything also works — the site is three files.)
-- [ ] Re-check: both should return the `index.html` fallback, not the file.
+**Resolved 6 Sep 2026 without a purge.** Verified right after the www deploy (run `34045758059`): both URLs now return the `index.html` fallback with `cf-cache-status: DYNAMIC`, so the cached copies are gone. The steps below are kept for the record.
+
+- [x] Purge them: Dashboard → `r301.dev` → Caching → Configuration → **Purge Custom URLs**, listing `https://www.r301.dev/package.json` and `https://www.r301.dev/README.md`. (Purge Everything also works — the site is three files.)
+- [x] Re-check: both should return the `index.html` fallback, not the file.
 ```bash
 curl -s https://www.r301.dev/package.json | head -c 40   # want: <!doctype html
 ```
