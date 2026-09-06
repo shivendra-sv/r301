@@ -37,6 +37,23 @@ const SCALAR = 'https://registry.scalar.com/@r301/apis/r301dev-api';
 const MAILTO =
   'mailto:mail@r301.dev?subject=r301.dev%20API%20key%20request&amp;body=Name%3A%0ACompany%3A%0AWhat%20you%27re%20building%3A%0AExpected%20volume%20%28links%20per%20month%29%3A%0A';
 
+// Terms the page must never contain. Each maps to a decision saying r301 lacks it.
+const FORBIDDEN = [
+  ['webhook', 'P2 — PRD §85, §377'],
+  ['custom domain', 'D1 — all links live on r301.dev/* in v1'],
+  ['no signup required', 'D14 — keys are minted by local script; no signup exists'],
+  ['free forever', 'no pricing is decided'],
+  ['unlimited', 'no pricing is decided'],
+  ['99.9', 'PRD §261 — a probe-measured target, not a credit-backed SLA'],
+];
+
+// docs/api-contract.md — "The Link resource" and "POST /v1/links".
+const LINK_FIELDS = [
+  'slug', 'short_url', 'destination', 'redirect_type', 'is_active',
+  'expires_at', 'tags', 'external_id', 'created_at', 'updated_at',
+];
+const CREATE_FIELDS = ['destination', 'slug', 'redirect_type', 'expires_at', 'tags', 'external_id'];
+
 const TITLE = 'r301.dev — an API-first URL shortener at the edge';
 const DESCRIPTION =
   "r301.dev creates and serves short links from Cloudflare's edge. One REST API, no dashboard to click through. Currently in private beta.";
@@ -243,4 +260,40 @@ test('animation only runs when motion is not reduced', () => {
   assert.ok(gated, 'no prefers-reduced-motion: no-preference block');
   const inside = [...gated.matchAll(/^\s*animation(?:-[a-z]+)?\s*:/gm)].length;
   assert.equal(inside, declarations, 'an animation declaration sits outside the reduced-motion gate');
+});
+
+// --- claims -------------------------------------------------------------------
+
+// Everything a reader can actually see: body text with tags stripped, plus the
+// title and the three description metas (whose text lives inside the tag).
+function claimText() {
+  const body = html.replace(/<[^>]+>/g, ' ');
+  const title = html.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? '';
+  return [body, title, ...meta('description'), ...meta('og:description'), ...meta('twitter:description')]
+    .join(' ')
+    .replace(/&[a-z]+;|&#\d+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+// Matches on visible text, not raw HTML, and `sla` on a word boundary — a raw
+// substring guard would fire the day the copy says "translate" or "Slack".
+export function forbiddenClaims(text) {
+  const lower = text.toLowerCase();
+  const hits = FORBIDDEN.filter(([term]) => lower.includes(term)).map(([term, why]) => `${term} (${why})`);
+  if (/\bsla\b/.test(lower)) hits.push('sla (PRD §261 — a target measured by probes, not a credit-backed SLA)');
+  return hits;
+}
+
+test('the claims guard catches the terms it is meant to catch', () => {
+  assert.deepEqual(forbiddenClaims('nothing to see here'), []);
+  assert.equal(forbiddenClaims('We support webhooks.').length, 1);
+  assert.equal(forbiddenClaims('Bring your own custom domain').length, 1);
+  assert.equal(forbiddenClaims('No signup required for your first links.').length, 1);
+  assert.equal(forbiddenClaims('99.9% uptime SLA').length, 2);
+  assert.deepEqual(forbiddenClaims('The translation slashed latency.'), []); // not "sla"
+});
+
+test('the page claims nothing the product cannot back', () => {
+  assert.deepEqual(forbiddenClaims(claimText()), []);
 });
