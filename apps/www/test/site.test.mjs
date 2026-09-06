@@ -45,6 +45,11 @@ const FORBIDDEN = [
   ['free forever', 'no pricing is decided'],
   ['unlimited', 'no pricing is decided'],
   ['99.9', 'PRD §261 — a probe-measured target, not a credit-backed SLA'],
+  ['analytics', 'D2 — click counts only; "detailed analytics" is a dropped claim'],
+  ['never recycled', 'PRD §96 — the P1 purge cron frees the slug after 30 days'],
+  ['vanity domain', 'D1 drift — "custom domain" alone does not catch it'],
+  ['your own domain', 'D1 drift — "custom domain" alone does not catch it'],
+  ['guaranteed uptime', 'PRD §261 — a probe-measured target, no credit-backed SLA'],
 ];
 
 // docs/api-contract.md — "The Link resource" and "POST /v1/links".
@@ -253,6 +258,10 @@ test('text/ground token pairs meet WCAG AA in both schemes', () => {
   }
 });
 
+test('--red never sets text color', () => {
+  assert.doesNotMatch(css, /(^|[^-\w])color\s*:\s*var\(--red\)/, '--red is 3.76:1 on ground — rules and dashes only, never text');
+});
+
 test('animation only runs when motion is not reduced', () => {
   const declarations = [...css.matchAll(/^\s*animation(?:-[a-z]+)?\s*:/gm)].length;
   if (declarations === 0) return;
@@ -312,7 +321,7 @@ test('the masthead is a lockup plus two links, one of them the key request', () 
 test('the hero keeps its headline and gains an honest eyebrow and key note', () => {
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   assert.match(html, /<h1 class="headline">Short links,<br>minus the dashboard\.<\/h1>/);
-  assert.match(text, /API-first URL shortener . Private beta/);
+  assert.match(text, /API-first URL shortener · Private beta/);
   assert.match(text, /Keys are issued by hand during the private pilot\./);
   assert.match(html, /class="rule rule-long"/);
   assert.match(html, /class="rule rule-short"/);
@@ -349,6 +358,7 @@ test('the request sample parses and uses only real create fields', () => {
   assert.match(req.destination, /^https:\/\//, 'destination must be http(s)');
   assert.match(req.slug, /^[a-zA-Z0-9_-]{3,64}$/, 'slug must satisfy the contract pattern');
   assert.ok(req.tags.length <= 10, 'at most 10 tags');
+  assert.ok(Date.parse(req.expires_at) > Date.now(), 'the sample expires_at must stay in the future — the contract rejects a past one');
 });
 
 test('the response sample is exactly the Link resource, and echoes the request', () => {
@@ -386,7 +396,7 @@ test('three numbered features tell the API-first / edge / safe story', () => {
   assert.match(text, /01[\s\S]*API-first/);
   assert.match(text, /02[\s\S]*Served at the edge/);
   assert.match(text, /03[\s\S]*Safe by default/);
-  assert.match(text, /tombstoned/, 'D15 is the point of feature 03');
+  assert.match(text, /tombstone/, 'D15 is the point of feature 03');
 });
 
 test('the strip lists four shipped capabilities', () => {

@@ -12,9 +12,10 @@
 # 6, 1 Sep 2026): a merge to `main` ships nothing. Run it from Actions → Deploy
 # www → Run workflow.
 #
-# No `pnpm test` / `pnpm typecheck` here, deliberately. Those cover @r301/api;
-# this workflow ships static HTML from apps/www, which has no test surface.
-# Gating a copy fix on an unrelated red API suite would buy nothing.
+# The www suite runs here because it gates what ships: apps/www/test/site.test.mjs
+# includes a claims guard that blocks unsupported marketing claims from shipping.
+# The API suite deliberately still does not run here — gating a copy fix on an
+# unrelated red API suite would buy nothing.
 name: Deploy www
 on:
   workflow_dispatch:
@@ -39,6 +40,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @r301/www test
       - name: Deploy to Cloudflare Pages (direct upload)
         # wrangler is a devDependency of @r301/api only — invoked cross-package so
         # this deploy uses the same pinned version as the Worker deploys, rather

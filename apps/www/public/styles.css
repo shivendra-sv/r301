@@ -192,7 +192,7 @@ main,
 .eyebrow {
   font-size: 0.8125rem;
   font-weight: 800;
-  line-height: 1;
+  line-height: 1.25;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--red-text);
@@ -328,7 +328,6 @@ main,
   font-size: 1.0625rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  margin: 0;
 }
 
 .panel-endpoint {

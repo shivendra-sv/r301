@@ -101,21 +101,21 @@
 
       <p class="sample-label">Request</p>
       <p class="sample-auth"><span class="tok-key">Authorization</span><span class="tok-punc">:</span> Bearer r301_live_…</p>
-<pre class="code" data-sample="request"><span class="tok-punc">{</span>
+<pre class="code" data-sample="request" tabindex="0" role="region" aria-label="Request body"><span class="tok-punc">{</span>
   <span class="tok-key">"destination"</span><span class="tok-punc">:</span> <span class="tok-str">"https://clinic.example.com/appt/9182"</span><span class="tok-punc">,</span>
   <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"visit-9182"</span><span class="tok-punc">,</span>
-  <span class="tok-key">"expires_at"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-30T12:00:00Z"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"expires_at"</span><span class="tok-punc">:</span> <span class="tok-str">"2027-03-31T12:00:00Z"</span><span class="tok-punc">,</span>
   <span class="tok-key">"tags"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span><span class="tok-str">"tenant:42"</span><span class="tok-punc">,</span> <span class="tok-str">"kind:appointment"</span><span class="tok-punc">]</span>
 <span class="tok-punc">}</span></pre>
 
       <p class="sample-label">Response <span class="sample-status">201</span></p>
-<pre class="code" data-sample="response"><span class="tok-punc">{</span>
+<pre class="code" data-sample="response" tabindex="0" role="region" aria-label="Response body"><span class="tok-punc">{</span>
   <span class="tok-key">"slug"</span><span class="tok-punc">:</span> <span class="tok-str">"visit-9182"</span><span class="tok-punc">,</span>
   <span class="tok-key">"short_url"</span><span class="tok-punc">:</span> <span class="tok-str">"https://r301.dev/visit-9182"</span><span class="tok-punc">,</span>
   <span class="tok-key">"destination"</span><span class="tok-punc">:</span> <span class="tok-str">"https://clinic.example.com/appt/9182"</span><span class="tok-punc">,</span>
   <span class="tok-key">"redirect_type"</span><span class="tok-punc">:</span> <span class="tok-num">302</span><span class="tok-punc">,</span>
   <span class="tok-key">"is_active"</span><span class="tok-punc">:</span> <span class="tok-num">true</span><span class="tok-punc">,</span>
-  <span class="tok-key">"expires_at"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-30T12:00:00Z"</span><span class="tok-punc">,</span>
+  <span class="tok-key">"expires_at"</span><span class="tok-punc">:</span> <span class="tok-str">"2027-03-31T12:00:00Z"</span><span class="tok-punc">,</span>
   <span class="tok-key">"tags"</span><span class="tok-punc">:</span> <span class="tok-punc">[</span><span class="tok-str">"tenant:42"</span><span class="tok-punc">,</span> <span class="tok-str">"kind:appointment"</span><span class="tok-punc">]</span><span class="tok-punc">,</span>
   <span class="tok-key">"external_id"</span><span class="tok-punc">:</span> <span class="tok-num">null</span><span class="tok-punc">,</span>
   <span class="tok-key">"created_at"</span><span class="tok-punc">:</span> <span class="tok-str">"2026-09-06T10:00:00Z"</span><span class="tok-punc">,</span>
@@ -129,8 +129,7 @@
         <h2 class="feature-title">API-first</h2>
         <p class="feature-body">
           No dashboard, no console to click through. Your code creates the links
-          and retires them; <code>POST</code>, <code>PATCH</code> and
-          <code>DELETE</code> are the whole product surface.
+          and retires them, over plain REST.
         </p>
       </li>
       <li class="feature">
@@ -145,9 +144,9 @@
         <p class="feature-num" aria-hidden="true">03</p>
         <h2 class="feature-title">Safe by default</h2>
         <p class="feature-body">
-          Deleted slugs are tombstoned, never recycled — nobody inherits a link
-          you retired. Reserved words are blocked. Unknown fields are rejected,
-          not quietly ignored.
+          Deleting a link tombstones it: the redirect 404s at once and the slug
+          stays blocked, so nobody inherits a link you retired. Reserved words
+          are blocked. Unknown fields are rejected, not quietly ignored.
         </p>
       </li>
     </ol>
