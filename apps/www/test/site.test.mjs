@@ -376,3 +376,26 @@ test('code-panel text meets AA on the panel surface in both schemes', () => {
     assert.ok(contrast(t['red-text'], t.ground) >= 4.5, `${name} red-text/ground`);
   }
 });
+
+// --- features & strip -------------------------------------------------------------
+
+test('three numbered features tell the API-first / edge / safe story', () => {
+  const items = [...html.matchAll(/<li class="feature">([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+  assert.equal(items.length, 3);
+  const text = items.join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(text, /01[\s\S]*API-first/);
+  assert.match(text, /02[\s\S]*Served at the edge/);
+  assert.match(text, /03[\s\S]*Safe by default/);
+  assert.match(text, /tombstoned/, 'D15 is the point of feature 03');
+});
+
+test('the strip lists four shipped capabilities', () => {
+  const items = [...html.matchAll(/<li class="strip-item">([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+  assert.equal(items.length, 4);
+  // &amp; decoded — the markup correctly encodes the literal ampersand (as the
+  // hero's "API playground &amp; docs" already does); match on the same text.
+  const text = items.join(' ').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  for (const title of ['Batch & tags', 'Idempotent creates', 'Click counts', 'OpenAPI']) {
+    assert.ok(text.includes(title), `missing "${title}"`);
+  }
+});

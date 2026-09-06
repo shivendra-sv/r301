@@ -123,6 +123,61 @@
 <span class="tok-punc">}</span></pre>
     </div>
 
+    <ol class="features">
+      <li class="feature">
+        <p class="feature-num" aria-hidden="true">01</p>
+        <h2 class="feature-title">API-first</h2>
+        <p class="feature-body">
+          No dashboard, no console to click through. Your code creates the links
+          and retires them; <code>POST</code>, <code>PATCH</code> and
+          <code>DELETE</code> are the whole product surface.
+        </p>
+      </li>
+      <li class="feature">
+        <p class="feature-num" aria-hidden="true">02</p>
+        <h2 class="feature-title">Served at the edge</h2>
+        <p class="feature-body">
+          Every redirect is answered by a Cloudflare Worker at the point of
+          presence nearest the click, reading a KV-cached copy of the link.
+        </p>
+      </li>
+      <li class="feature">
+        <p class="feature-num" aria-hidden="true">03</p>
+        <h2 class="feature-title">Safe by default</h2>
+        <p class="feature-body">
+          Deleted slugs are tombstoned, never recycled — nobody inherits a link
+          you retired. Reserved words are blocked. Unknown fields are rejected,
+          not quietly ignored.
+        </p>
+      </li>
+    </ol>
+
+  </section>
+
+  <section class="strip">
+    <h2 class="sr-only">Capabilities</h2>
+    <ul class="strip-list">
+      <li class="strip-item">
+        <span class="strip-dash" aria-hidden="true"></span>
+        <h3 class="strip-title">Batch &amp; tags</h3>
+        <p class="strip-body">Up to 100 links in one call, with per-item results.</p>
+      </li>
+      <li class="strip-item">
+        <span class="strip-dash" aria-hidden="true"></span>
+        <h3 class="strip-title">Idempotent creates</h3>
+        <p class="strip-body">Retry a job without minting duplicates.</p>
+      </li>
+      <li class="strip-item">
+        <span class="strip-dash" aria-hidden="true"></span>
+        <h3 class="strip-title">Click counts</h3>
+        <p class="strip-body">Per link and per tag. Counts, not surveillance.</p>
+      </li>
+      <li class="strip-item">
+        <span class="strip-dash" aria-hidden="true"></span>
+        <h3 class="strip-title">OpenAPI</h3>
+        <p class="strip-body">A typed contract and a live playground.</p>
+      </li>
+    </ul>
   </section>
 
 </main>
