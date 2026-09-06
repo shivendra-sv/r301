@@ -1,10 +1,11 @@
 /* www.r301.dev — the lockup at page scale.
    The kit's mark is the wordmark over two rules: a long ink one (the URL you
    were handed) and a short red one (the one r301 hands back). Here the headline
-   stands where the wordmark stands, the ink rule runs off the right edge of
-   the viewport, and the red rule stops short — and, once, on load, shortens
-   from the long rule's length to its own. Archivo comes from Google Fonts, the
-   page's only third-party request. There is no JavaScript. */
+   stands where the wordmark stands, both rules run the gutter's full width, and
+   the red one stops short — and, once, on load, shortens from the long rule's
+   length to its own. The masthead lockup itself is the kit's own PNG, not type
+   dressed up to imitate it. Archivo comes from Google Fonts, the page's only
+   third-party request. There is no JavaScript. */
 
 /* ---------- tokens ---------- */
 
@@ -20,9 +21,6 @@
   --surface:    #fbfafa;
   --code-ink:   #201e1d;
   --code-muted: #6b6866;
-  --footer-ground: #201e1d;
-  --footer-ink:    #f3f2f2;
-  --footer-muted:  #a8a5a3;
 
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -47,9 +45,6 @@
     --surface:    #2a2725;
     --code-ink:   #f3f2f2;
     --code-muted: #a8a5a3;
-    --footer-ground: #201e1d;
-    --footer-ink:    #f3f2f2;
-    --footer-muted:  #a8a5a3;
   }
 }
 
@@ -117,10 +112,19 @@ a { color: inherit; }
 /* ---------- bands ---------- */
 
 .masthead,
-main,
-.colophon { padding-inline: var(--gutter); }
+main { padding-inline: var(--gutter); }
 
 /* ---------- masthead ---------- */
+
+/* The lockup is the kit's own artwork, not type set to look like it. The dark
+   file carries a baked #201e1d ground that matches --ground exactly, so it
+   seats seamlessly; the light file is transparent. 6rem is the kit's stated
+   minimum lockup width. */
+.lockup img {
+  display: block;
+  width: 6rem;
+  height: auto;
+}
 
 .masthead {
   display: flex;
@@ -130,30 +134,6 @@ main,
   gap: 1rem 2rem;
   padding-block: 1.5rem;
   border-bottom: 1px solid var(--hairline);
-}
-
-.wordmark {
-  position: relative;
-  font-size: 1.375rem;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  /* the kit asks for clear space ≥ 2× the red rule: 8 + 6 = 14px */
-  padding-bottom: calc(var(--rule-gap) + var(--rule-short));
-}
-
-.wordmark-tld {
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.wordmark-rule {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 2.25rem;
-  height: var(--rule-short);
-  background: var(--red);
 }
 
 .nav {
@@ -206,11 +186,11 @@ main,
   letter-spacing: -0.04em;
 }
 
-.actions-note {
-  flex-basis: 100%;
-  font-size: 0.875rem;
-  color: var(--muted);
-}
+.headline-links { color: var(--ink); }
+
+/* 3.76:1 on ground — legal here only because display type clears WCAG's 3:1
+   large-text threshold. Pinned by a test; never reuse it on body copy. */
+.headline-code { color: var(--red); }
 
 .rules {
   display: grid;
@@ -223,13 +203,13 @@ main,
 
 .rule-long {
   height: var(--rule-long);
-  width: calc(100% + var(--gutter));   /* to the viewport's right edge, exactly */
+  width: 100%;                         /* stops at the gutter, not the viewport edge */
   background: var(--ink);
 }
 
 .rule-short {
   height: var(--rule-short);
-  width: calc((100% + var(--gutter)) * var(--short-ratio));
+  width: calc(100% * var(--short-ratio));
   background: var(--red);
   transform-origin: left center;
 }
@@ -422,90 +402,6 @@ main,
   .detail { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ---------- capability strip ---------- */
-
-.strip {
-  padding-block: clamp(2rem, 5vh, 3.5rem);
-  border-top: 1px solid var(--hairline);
-}
-
-.strip-list {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 2rem clamp(1.5rem, 4vw, 3rem);
-}
-
-.strip-dash {
-  display: block;
-  width: 1.75rem;
-  height: var(--rule-long);
-  background: var(--red);
-  margin-bottom: 0.875rem;
-}
-
-.strip-title {
-  font-size: 1rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  margin-bottom: 0.25rem;
-}
-
-.strip-body {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--muted);
-  text-wrap: pretty;
-}
-
-@media (max-width: 62rem) {
-  .strip-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 34rem) {
-  .strip-list { grid-template-columns: minmax(0, 1fr); }
-}
-
-/* ---------- colophon: an ink band in both schemes ---------- */
-
-.colophon {
-  background: var(--footer-ground);
-  color: var(--footer-muted);
-  /* in dark mode the band and the page ground match, so the rule marks the edge */
-  border-top: var(--rule-long) solid var(--ink);
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 1.5rem clamp(1.5rem, 5vw, 4rem);
-  padding-block: clamp(2rem, 5vh, 3rem);
-  font-size: 0.8125rem;
-}
-
-.wordmark-reversed { color: var(--footer-ink); }
-.wordmark-reversed .wordmark-tld { color: var(--footer-muted); }
-
-.colophon-tag {
-  margin-top: 0.875rem;
-  max-width: 22rem;
-  text-wrap: pretty;
-}
-
-.colophon-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-}
-
-.colophon a {
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.2em;
-}
-
-.colophon a:hover { color: var(--footer-ink); }
-
 /* ---------- motion: one moment, once ---------- */
 
 @media (prefers-reduced-motion: no-preference) {
@@ -515,8 +411,7 @@ main,
   .cta-primary,
   .cta-secondary,
   .nav-link,
-  .nav-cta,
-  .colophon a {
+  .nav-cta {
     transition: box-shadow 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out;
   }
 }

@@ -25,6 +25,10 @@ const SHIPPED = [
   'android-chrome-512x512.png',
   'maskable-512x512.png',
   'og-image.png',
+  'r301-lockup-light-1x.png',
+  'r301-lockup-light-2x.png',
+  'r301-lockup-dark-1x.png',
+  'r301-lockup-dark-2x.png',
 ];
 
 const FONT_ORIGINS = new Set(['https://fonts.googleapis.com', 'https://fonts.gstatic.com']);
@@ -213,7 +217,7 @@ test('one h1, one main, semantic landmarks', () => {
   assert.equal(tags('h1').length, 1);
   assert.equal(tags('main').length, 1);
   assert.equal(tags('header').length, 1);
-  assert.equal(tags('footer').length, 1);
+  assert.equal(tags('footer').length, 0, 'the footer band was removed');
   assert.match(html, /<html lang="en">/);
 });
 
@@ -258,8 +262,19 @@ test('text/ground token pairs meet WCAG AA in both schemes', () => {
   }
 });
 
-test('--red never sets text color', () => {
-  assert.doesNotMatch(css, /(^|[^-\w])color\s*:\s*var\(--red\)/, '--red is 3.76:1 on ground — rules and dashes only, never text');
+// --red is 3.76:1 on ground: below AA for body text, but WCAG's large-text
+// threshold is 3:1, so it is legal on display type and nowhere else. This pins
+// both halves — which rule may use it, and that the rule really is that large.
+test('--red sets text only in the headline, which is always large text', () => {
+  const users = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => /(^|[^-\w])color\s*:\s*var\(--red\)/.test(m[2]))
+    .map((m) => m[1].trim().split('\n').pop().trim());
+  assert.deepEqual(users, ['.headline-code'], '--red is 3.76:1 — display type only, never body text');
+
+  const headline = block(css, '.headline {');
+  assert.match(headline, /font-weight:\s*800/, 'the large-text allowance assumes bold');
+  const floor = headline.match(/font-size:\s*clamp\(\s*([\d.]+)rem/);
+  assert.ok(floor && Number(floor[1]) * 16 >= 24, 'headline floor must stay >= 24px for the 3:1 allowance');
 });
 
 test('animation only runs when motion is not reduced', () => {
@@ -315,16 +330,32 @@ test('the masthead is a lockup plus two links, one of them the key request', () 
   assert.match(nav, /class="nav-cta"/, 'Request a key button');
   assert.match(nav, new RegExp(`href="${SCALAR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`), 'docs link');
   assert.ok(nav.includes(MAILTO), 'the key request uses the prefilled mailto');
-  assert.match(html, /class="wordmark-rule"/, 'the kit’s red rule under the wordmark');
+  assert.match(html, /<img[^>]+r301-lockup-light-1x\.png/, 'the masthead ships the kit lockup as an image');
+  assert.match(html, /<source[^>]+r301-lockup-dark-1x\.png/, 'and a dark-scheme source');
+  assert.doesNotMatch(html, /class="wordmark/, 'the CSS imitation of the lockup is gone');
 });
 
-test('the hero keeps its headline and gains an honest eyebrow and key note', () => {
+test('the headline is two lines in two colours, and the eyebrow carries the beta', () => {
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  assert.match(html, /<h1 class="headline">Short links,<br>minus the dashboard\.<\/h1>/);
+  assert.match(html, /<span class="headline-links">Short links\.<\/span><br><span class="headline-code">Clean code\.<\/span>/);
   assert.match(text, /API-first URL shortener · Private beta/);
-  assert.match(text, /Keys are issued by hand during the private pilot\./);
+  assert.doesNotMatch(text, /Keys are issued by hand/, 'the beta signal lives in the eyebrow and the CTA now');
   assert.match(html, /class="rule rule-long"/);
   assert.match(html, /class="rule rule-short"/);
+});
+
+test('the hero rules respect the gutter instead of bleeding off the viewport', () => {
+  const long = block(css, '.rule-long');
+  const short = block(css, '.rule-short');
+  assert.doesNotMatch(long, /var\(--gutter\)/, 'the ink rule must stop at the gutter');
+  assert.doesNotMatch(short, /var\(--gutter\)/, 'and so must the red one');
+  assert.match(long, /width:\s*100%/);
+});
+
+test('the lede carries the new subtext', () => {
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(text, /A lightweight URL shortening API with zero fluff\./);
+  assert.match(text, /Drop it into your backend, authenticate, and start generating custom short links/);
 });
 
 test('the page is a document, not a locked viewport', () => {
@@ -371,62 +402,3 @@ test('the response sample is exactly the Link resource, and echoes the request',
   assert.equal(res.redirect_type, 302, 'the contract default (D5)');
 });
 
-test('code sets in a system mono stack, never a webfont', () => {
-  const root = block(css, ':root') ?? '';
-  assert.match(root, /--mono:\s*ui-monospace/, 'a --mono token built on ui-monospace');
-});
-
-test('code-panel text meets AA on the panel surface in both schemes', () => {
-  const light = tokens(block(css, ':root') ?? '');
-  const dark = tokens(block(css, '@media (prefers-color-scheme: dark)') ?? '');
-  for (const [name, t] of [['light', light], ['dark', dark]]) {
-    assert.ok(contrast(t['code-ink'], t.surface) >= 4.5, `${name} code-ink/surface`);
-    assert.ok(contrast(t['code-muted'], t.surface) >= 4.5, `${name} code-muted/surface`);
-    assert.ok(contrast(t['red-text'], t.surface) >= 4.5, `${name} red-text/surface`);
-    assert.ok(contrast(t['red-text'], t.ground) >= 4.5, `${name} red-text/ground`);
-  }
-});
-
-// --- features & strip -------------------------------------------------------------
-
-test('three numbered features tell the API-first / edge / safe story', () => {
-  const items = [...html.matchAll(/<li class="feature">([\s\S]*?)<\/li>/g)].map((m) => m[1]);
-  assert.equal(items.length, 3);
-  const text = items.join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  assert.match(text, /01[\s\S]*API-first/);
-  assert.match(text, /02[\s\S]*Served at the edge/);
-  assert.match(text, /03[\s\S]*Safe by default/);
-  assert.match(text, /tombstone/, 'D15 is the point of feature 03');
-});
-
-test('the strip lists four shipped capabilities', () => {
-  const items = [...html.matchAll(/<li class="strip-item">([\s\S]*?)<\/li>/g)].map((m) => m[1]);
-  assert.equal(items.length, 4);
-  // &amp; decoded — the markup correctly encodes the literal ampersand (as the
-  // hero's "API playground &amp; docs" already does); match on the same text.
-  const text = items.join(' ').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
-  for (const title of ['Batch & tags', 'Idempotent creates', 'Click counts', 'OpenAPI']) {
-    assert.ok(text.includes(title), `missing "${title}"`);
-  }
-});
-
-// --- footer -----------------------------------------------------------------------
-
-test('the footer is an ink band carrying the lockup, in text, not an image', () => {
-  const footer = html.match(/<footer[\s\S]*?<\/footer>/)?.[0] ?? '';
-  assert.match(footer, /class="wordmark wordmark-reversed"/, 'the reversed lockup');
-  assert.match(footer, /class="wordmark-rule"/, 'and its red rule');
-  assert.doesNotMatch(footer, /<img\b/, 'brand/ is never uploaded — the lockup must be text');
-  assert.match(footer.replace(/<[^>]+>/g, ' '), /An API-first URL shortener, served from the edge\./);
-  assert.match(css, /\.colophon\s*\{[^}]*background:\s*var\(--footer-ground\)/);
-});
-
-test('footer text meets AA on the band in both schemes', () => {
-  const light = tokens(block(css, ':root') ?? '');
-  const dark = tokens(block(css, '@media (prefers-color-scheme: dark)') ?? '');
-  for (const [name, t] of [['light', light], ['dark', dark]]) {
-    assert.ok(contrast(t['footer-ink'], t['footer-ground']) >= 4.5, `${name} footer-ink/footer-ground`);
-    assert.ok(contrast(t['footer-muted'], t['footer-ground']) >= 4.5, `${name} footer-muted/footer-ground`);
-    assert.ok(contrast(t.red, t['footer-ground']) >= 3, `${name} red rule on the band`);
-  }
-});

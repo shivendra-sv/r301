@@ -41,10 +41,13 @@
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="masthead">
-  <p class="wordmark">
-    <span class="wordmark-name">r301</span><span class="wordmark-tld">.dev</span>
-    <span class="wordmark-rule" aria-hidden="true"></span>
-  </p>
+  <picture class="lockup">
+    <source media="(prefers-color-scheme: dark)"
+            srcset="/r301-lockup-dark-1x.png 1x, /r301-lockup-dark-2x.png 2x">
+    <img src="/r301-lockup-light-1x.png"
+         srcset="/r301-lockup-light-1x.png 1x, /r301-lockup-light-2x.png 2x"
+         width="263" height="106" alt="r301.dev">
+  </picture>
   <nav class="nav" aria-label="Primary">
     <a class="nav-link"
        href="https://registry.scalar.com/@r301/apis/r301dev-api"
@@ -59,7 +62,7 @@
   <section class="hero">
     <p class="eyebrow">API-first URL shortener <span aria-hidden="true">·</span> Private beta</p>
 
-    <h1 class="headline">Short links,<br>minus the dashboard.</h1>
+    <h1 class="headline"><span class="headline-links">Short links.</span><br><span class="headline-code">Clean code.</span></h1>
 
     <div class="rules" aria-hidden="true">
       <span class="rule rule-long"></span>
@@ -68,8 +71,9 @@
 
     <div class="below">
       <p class="lede">
-        r301.dev is a URL shortener that's only an API. Your code creates and
-        retires the links. Cloudflare's edge serves every redirect.
+        A lightweight URL shortening API with zero fluff. Drop it into your
+        backend, authenticate, and start generating custom short links in under
+        two minutes.
       </p>
 
       <div class="actions">
@@ -86,7 +90,6 @@
            href="mailto:mail@r301.dev?subject=r301.dev%20API%20key%20request&amp;body=Name%3A%0ACompany%3A%0AWhat%20you%27re%20building%3A%0AExpected%20volume%20%28links%20per%20month%29%3A%0A">
           Request an API key
         </a>
-        <p class="actions-note">Keys are issued by hand during the private pilot.</p>
       </div>
     </div>
   </section>
@@ -153,49 +156,7 @@
 
   </section>
 
-  <section class="strip">
-    <h2 class="sr-only">Capabilities</h2>
-    <ul class="strip-list">
-      <li class="strip-item">
-        <span class="strip-dash" aria-hidden="true"></span>
-        <h3 class="strip-title">Batch &amp; tags</h3>
-        <p class="strip-body">Up to 100 links in one call, with per-item results.</p>
-      </li>
-      <li class="strip-item">
-        <span class="strip-dash" aria-hidden="true"></span>
-        <h3 class="strip-title">Idempotent creates</h3>
-        <p class="strip-body">Retry a job without minting duplicates.</p>
-      </li>
-      <li class="strip-item">
-        <span class="strip-dash" aria-hidden="true"></span>
-        <h3 class="strip-title">Click counts</h3>
-        <p class="strip-body">Per link and per tag. Counts, not surveillance.</p>
-      </li>
-      <li class="strip-item">
-        <span class="strip-dash" aria-hidden="true"></span>
-        <h3 class="strip-title">OpenAPI</h3>
-        <p class="strip-body">A typed contract and a live playground.</p>
-      </li>
-    </ul>
-  </section>
-
 </main>
-
-<footer class="colophon">
-  <div class="colophon-brand">
-    <p class="wordmark wordmark-reversed">
-      <span class="wordmark-name">r301</span><span class="wordmark-tld">.dev</span>
-      <span class="wordmark-rule" aria-hidden="true"></span>
-    </p>
-    <p class="colophon-tag">An API-first URL shortener, served from the edge.</p>
-  </div>
-  <p class="colophon-links">
-    <a href="https://registry.scalar.com/@r301/apis/r301dev-api"
-       target="_blank" rel="noopener noreferrer">Documentation<span class="sr-only"> (opens in a new tab)</span></a>
-    <a href="mailto:mail@r301.dev">mail@r301.dev</a>
-  </p>
-  <p class="colophon-copy">© 2026 r301.dev</p>
-</footer>
 
 </body>
 </html>
