@@ -15,6 +15,8 @@
   --ink:    #201e1d;
   --muted:  #6b6866;   /* the lockup's ".dev" grey: 4.95:1 on ground */
   --red:    #ec3013;   /* 3.76:1 on ground: rules, focus, hover — never small text */
+  --red-text: #c9280f; /* 4.95:1 on ground, 5.31:1 on surface — red that may set text */
+  --hairline: #d8d5d3; /* band dividers; non-text */
 
   --font: "Archivo", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --gutter: clamp(1.25rem, 5vw, 5rem);
@@ -32,6 +34,8 @@
     --ink:    #f3f2f2;
     --muted:  #a8a5a3;   /* 6.78:1 on ink */
     --red:    #ec3013;   /* 3.95:1 on ink */
+    --red-text: #ff7a63; /* 6.50:1 on ground, 5.80:1 on surface */
+    --hairline: #3a3735;
   }
 }
 
@@ -96,31 +100,32 @@ a { color: inherit; }
 
 .skip:focus { left: var(--gutter); top: 0.5rem; }
 
-/* ---------- frame: masthead / main / colophon in one viewport ---------- */
+/* ---------- bands ---------- */
 
-.frame {
-  min-height: 100vh;
-  min-height: 100svh;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  padding-inline: var(--gutter);
-}
+.masthead,
+main,
+.colophon { padding-inline: var(--gutter); }
 
 /* ---------- masthead ---------- */
 
 .masthead {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
+  align-items: center;
+  gap: 1rem 2rem;
   padding-block: 1.5rem;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .wordmark {
+  position: relative;
   font-size: 1.375rem;
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.04em;
+  /* the kit asks for clear space ≥ 2× the red rule: 8 + 6 = 14px */
+  padding-bottom: calc(var(--rule-gap) + var(--rule-short));
 }
 
 .wordmark-tld {
@@ -128,19 +133,56 @@ a { color: inherit; }
   color: var(--muted);
 }
 
-.status {
-  font-size: 0.8125rem;
-  line-height: 1;
-  color: var(--muted);
+.wordmark-rule {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 2.25rem;
+  height: var(--rule-short);
+  background: var(--red);
 }
 
-/* ---------- main ---------- */
-
-main {
+.nav {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding-block: clamp(1.5rem, 4vh, 3.5rem);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.75rem;
+}
+
+.nav-link {
+  font-size: 0.9375rem;
+  text-decoration: none;
+  padding-bottom: 0.125rem;
+  border-bottom: 2px solid transparent;
+}
+
+.nav-link:hover { border-bottom-color: var(--red); }
+
+.nav-cta {
+  padding: 0.75rem 1.125rem;
+  background: var(--ink);
+  color: var(--ground);
+  font-size: 0.9375rem;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  box-shadow: inset 0 0 0 var(--red);
+}
+
+.nav-cta:hover { box-shadow: inset 0 calc(-1 * var(--rule-short)) 0 var(--red); }
+
+/* ---------- hero ---------- */
+
+.hero { padding-block: clamp(2.5rem, 7vh, 5.5rem) clamp(2.5rem, 6vh, 4.5rem); }
+
+.eyebrow {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--red-text);
+  margin-bottom: clamp(1rem, 2.5vh, 1.75rem);
 }
 
 .headline {
@@ -148,6 +190,12 @@ main {
   font-weight: 800;
   line-height: 0.92;
   letter-spacing: -0.04em;
+}
+
+.actions-note {
+  flex-basis: 100%;
+  font-size: 0.875rem;
+  color: var(--muted);
 }
 
 .rules {
@@ -268,6 +316,8 @@ main {
   }
   .cta-primary,
   .cta-secondary,
+  .nav-link,
+  .nav-cta,
   .colophon a {
     transition: box-shadow 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out;
   }

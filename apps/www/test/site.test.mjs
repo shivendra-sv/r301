@@ -297,3 +297,28 @@ test('the claims guard catches the terms it is meant to catch', () => {
 test('the page claims nothing the product cannot back', () => {
   assert.deepEqual(forbiddenClaims(claimText()), []);
 });
+
+// --- masthead & hero ------------------------------------------------------------
+
+test('the masthead is a lockup plus two links, one of them the key request', () => {
+  const nav = html.match(/<nav\b[\s\S]*?<\/nav>/)?.[0] ?? '';
+  assert.match(nav, /class="nav-link"/, 'Documentation link');
+  assert.match(nav, /class="nav-cta"/, 'Request a key button');
+  assert.match(nav, new RegExp(`href="${SCALAR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`), 'docs link');
+  assert.ok(nav.includes(MAILTO), 'the key request uses the prefilled mailto');
+  assert.match(html, /class="wordmark-rule"/, 'the kit’s red rule under the wordmark');
+});
+
+test('the hero keeps its headline and gains an honest eyebrow and key note', () => {
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(html, /<h1 class="headline">Short links,<br>minus the dashboard\.<\/h1>/);
+  assert.match(text, /API-first URL shortener . Private beta/);
+  assert.match(text, /Keys are issued by hand during the private pilot\./);
+  assert.match(html, /class="rule rule-long"/);
+  assert.match(html, /class="rule rule-short"/);
+});
+
+test('the page is a document, not a locked viewport', () => {
+  assert.doesNotMatch(html, /class="frame"/, 'the single-frame wrapper is gone');
+  assert.doesNotMatch(css, /\.frame\s*\{/, 'and so are its styles');
+});
