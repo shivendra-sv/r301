@@ -335,10 +335,10 @@ test('the masthead is a lockup plus two links, one of them the key request', () 
   assert.doesNotMatch(html, /class="wordmark/, 'the CSS imitation of the lockup is gone');
 });
 
-test('the headline is two lines in two colours, under a bare eyebrow', () => {
+test('the headline is two lines in two colours, under a beta-free eyebrow', () => {
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   assert.match(html, /<span class="headline-links">Short links\.<\/span><br><span class="headline-code">Clean code\.<\/span>/);
-  assert.match(html, /<p class="eyebrow">API-first<\/p>/, 'the eyebrow is the bare claim, nothing appended');
+  assert.match(html, /<p class="eyebrow">API-first URL shortener<\/p>/, 'the eyebrow names the product, nothing appended');
   assert.doesNotMatch(text, /Private beta/, 'the beta marker was dropped from the page body');
   assert.doesNotMatch(text, /Keys are issued by hand/, 'the beta signal lives in the eyebrow and the CTA now');
   assert.match(html, /class="rule rule-long"/);
