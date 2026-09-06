@@ -20,6 +20,9 @@
   --surface:    #fbfafa;
   --code-ink:   #201e1d;
   --code-muted: #6b6866;
+  --footer-ground: #201e1d;
+  --footer-ink:    #f3f2f2;
+  --footer-muted:  #a8a5a3;
 
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -44,6 +47,9 @@
     --surface:    #2a2725;
     --code-ink:   #f3f2f2;
     --code-muted: #a8a5a3;
+    --footer-ground: #201e1d;
+    --footer-ink:    #f3f2f2;
+    --footer-muted:  #a8a5a3;
   }
 }
 
@@ -462,16 +468,29 @@ main,
   .strip-list { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ---------- colophon ---------- */
+/* ---------- colophon: an ink band in both schemes ---------- */
 
 .colophon {
+  background: var(--footer-ground);
+  color: var(--footer-muted);
+  /* in dark mode the band and the page ground match, so the rule marks the edge */
+  border-top: var(--rule-long) solid var(--ink);
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 0.5rem 1.5rem;
-  padding-block: 1.25rem 1.5rem;
+  align-items: flex-end;
+  gap: 1.5rem clamp(1.5rem, 5vw, 4rem);
+  padding-block: clamp(2rem, 5vh, 3rem);
   font-size: 0.8125rem;
-  color: var(--muted);
+}
+
+.wordmark-reversed { color: var(--footer-ink); }
+.wordmark-reversed .wordmark-tld { color: var(--footer-muted); }
+
+.colophon-tag {
+  margin-top: 0.875rem;
+  max-width: 22rem;
+  text-wrap: pretty;
 }
 
 .colophon-links {
@@ -486,7 +505,7 @@ main,
   text-underline-offset: 0.2em;
 }
 
-.colophon a:hover { color: var(--ink); }
+.colophon a:hover { color: var(--footer-ink); }
 
 /* ---------- motion: one moment, once ---------- */
 

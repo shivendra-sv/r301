@@ -399,3 +399,24 @@ test('the strip lists four shipped capabilities', () => {
     assert.ok(text.includes(title), `missing "${title}"`);
   }
 });
+
+// --- footer -----------------------------------------------------------------------
+
+test('the footer is an ink band carrying the lockup, in text, not an image', () => {
+  const footer = html.match(/<footer[\s\S]*?<\/footer>/)?.[0] ?? '';
+  assert.match(footer, /class="wordmark wordmark-reversed"/, 'the reversed lockup');
+  assert.match(footer, /class="wordmark-rule"/, 'and its red rule');
+  assert.doesNotMatch(footer, /<img\b/, 'brand/ is never uploaded — the lockup must be text');
+  assert.match(footer.replace(/<[^>]+>/g, ' '), /An API-first URL shortener, served from the edge\./);
+  assert.match(css, /\.colophon\s*\{[^}]*background:\s*var\(--footer-ground\)/);
+});
+
+test('footer text meets AA on the band in both schemes', () => {
+  const light = tokens(block(css, ':root') ?? '');
+  const dark = tokens(block(css, '@media (prefers-color-scheme: dark)') ?? '');
+  for (const [name, t] of [['light', light], ['dark', dark]]) {
+    assert.ok(contrast(t['footer-ink'], t['footer-ground']) >= 4.5, `${name} footer-ink/footer-ground`);
+    assert.ok(contrast(t['footer-muted'], t['footer-ground']) >= 4.5, `${name} footer-muted/footer-ground`);
+    assert.ok(contrast(t.red, t['footer-ground']) >= 3, `${name} red rule on the band`);
+  }
+});
