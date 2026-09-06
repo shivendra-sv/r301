@@ -322,3 +322,57 @@ test('the page is a document, not a locked viewport', () => {
   assert.doesNotMatch(html, /class="frame"/, 'the single-frame wrapper is gone');
   assert.doesNotMatch(css, /\.frame\s*\{/, 'and so are its styles');
 });
+
+// --- code panel ------------------------------------------------------------------
+
+// Strips the highlighting spans out of a <pre data-sample="…"> and parses it.
+// &amp; is decoded last so an encoded entity is not double-decoded.
+function sample(name) {
+  const m = html.match(new RegExp(`<pre[^>]*data-sample="${name}"[^>]*>([\\s\\S]*?)</pre>`));
+  assert.ok(m, `no <pre data-sample="${name}">`);
+  const json = m[1]
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+  return JSON.parse(json);
+}
+
+test('the request sample parses and uses only real create fields', () => {
+  const req = sample('request');
+  for (const key of Object.keys(req)) {
+    assert.ok(CREATE_FIELDS.includes(key), `"${key}" is not a POST /v1/links field`);
+  }
+  assert.ok('destination' in req, 'destination is required');
+  assert.match(req.destination, /^https:\/\//, 'destination must be http(s)');
+  assert.match(req.slug, /^[a-zA-Z0-9_-]{3,64}$/, 'slug must satisfy the contract pattern');
+  assert.ok(req.tags.length <= 10, 'at most 10 tags');
+});
+
+test('the response sample is exactly the Link resource, and echoes the request', () => {
+  const res = sample('response');
+  const req = sample('request');
+  assert.deepEqual(Object.keys(res).sort(), [...LINK_FIELDS].sort());
+  assert.equal(res.slug, req.slug);
+  assert.equal(res.destination, req.destination);
+  assert.equal(res.short_url, `https://r301.dev/${res.slug}`);
+  assert.equal(res.redirect_type, 302, 'the contract default (D5)');
+});
+
+test('code sets in a system mono stack, never a webfont', () => {
+  const root = block(css, ':root') ?? '';
+  assert.match(root, /--mono:\s*ui-monospace/, 'a --mono token built on ui-monospace');
+});
+
+test('code-panel text meets AA on the panel surface in both schemes', () => {
+  const light = tokens(block(css, ':root') ?? '');
+  const dark = tokens(block(css, '@media (prefers-color-scheme: dark)') ?? '');
+  for (const [name, t] of [['light', light], ['dark', dark]]) {
+    assert.ok(contrast(t['code-ink'], t.surface) >= 4.5, `${name} code-ink/surface`);
+    assert.ok(contrast(t['code-muted'], t.surface) >= 4.5, `${name} code-muted/surface`);
+    assert.ok(contrast(t['red-text'], t.surface) >= 4.5, `${name} red-text/surface`);
+    assert.ok(contrast(t['red-text'], t.ground) >= 4.5, `${name} red-text/ground`);
+  }
+});
